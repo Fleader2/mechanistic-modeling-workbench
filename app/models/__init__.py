@@ -1,0 +1,53 @@
+"""SQLAlchemy ORM models for the Workbench.
+
+Submodules are imported so that ``Base.metadata`` is fully populated as soon
+as ``app.models`` is imported, which is what ``migrations/env.py`` relies on
+for Alembic to discover table metadata.
+
+No model here ever declares a foreign key into another repository's
+database -- there is no such thing as a cross-database foreign key in
+PostgreSQL, and even if there were, the Workbench never assumes direct
+access to Agent 1 (or any other agent's) tables (see
+``docs/01_workbench_architecture.md``). Every reference to an Agent-1-owned
+biological entity is a plain, nullable ``(entity_type, entity_id)`` pair --
+a copied identifier, never a constraint-enforced relationship.
+"""
+
+from app.db.base import Base
+from app.models.dataset_reference import DatasetReference
+from app.models.model import Model
+from app.models.model_build_request import (
+    ModelBuildRequest,
+    ModelBuildRequestAssumption,
+    ModelBuildRequestCompartment,
+    ModelBuildRequestEnzymeState,
+    ModelBuildRequestGeneProtein,
+    ModelBuildRequestPathway,
+    ModelBuildRequestReaction,
+    ModelBuildRequestRegulatoryInteraction,
+    ModelBuildRequestSpecies,
+)
+from app.models.modeling_decision import ModelingDecision, ModelingDecisionOption
+from app.models.project import Project
+from app.models.run_record import RunRecord
+from app.models.subproject import Subproject
+
+__all__ = [
+    "Base",
+    "DatasetReference",
+    "Model",
+    "ModelBuildRequest",
+    "ModelBuildRequestAssumption",
+    "ModelBuildRequestCompartment",
+    "ModelBuildRequestEnzymeState",
+    "ModelBuildRequestGeneProtein",
+    "ModelBuildRequestPathway",
+    "ModelBuildRequestReaction",
+    "ModelBuildRequestRegulatoryInteraction",
+    "ModelBuildRequestSpecies",
+    "ModelingDecision",
+    "ModelingDecisionOption",
+    "Project",
+    "RunRecord",
+    "Subproject",
+]

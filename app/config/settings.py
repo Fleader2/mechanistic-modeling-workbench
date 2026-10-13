@@ -1,0 +1,65 @@
+"""Environment-driven application configuration.
+
+Mirrors the settings pattern used across the sibling agent repositories
+(e.g. ``agent1-biochemical-curator/app/config/settings.py``): no credential
+is ever given a default value, and configuration is read once per process
+via ``get_settings``.
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from typing import Literal
+
+from pydantic import PostgresDsn
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+APPLICATION_NAME = "Mechanistic Modeling Workbench"
+
+LogLevel = Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
+
+
+class Settings(BaseSettings):
+    """Runtime configuration read from the environment or a local ``.env`` file."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    app_env: Literal["local", "test", "ci", "production"] = "local"
+    log_level: LogLevel = "INFO"
+
+    database_url: PostgresDsn
+    """Canonical PostgreSQL database. Required; no default is supplied."""
+
+    test_database_url: PostgresDsn | None = None
+    """Separate database used by the test suite. Tests refuse to run without it."""
+
+    database_echo: bool = False
+
+    @property
+    def sqlalchemy_url(self) -> str:
+        """Database URL with an explicit driver.
+
+        SQLAlchemy defaults the bare ``postgresql://`` scheme to psycopg2, which
+        this project does not install. The driver is made explicit rather than
+        letting connection fail with a confusing import error.
+        """
+        url = str(self.database_url)
+        for bare_scheme in ("postgresql://", "postgres://"):
+            if url.startswith(bare_scheme):
+                return "postgresql+psycopg://" + url[len(bare_scheme) :]
+        return url
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return the cached settings instance.
+
+    Cached so that configuration is read once per process. Tests call
+    ``get_settings.cache_clear()`` after changing the environment.
+    """
+    return Settings()  # type: ignore[call-arg]
