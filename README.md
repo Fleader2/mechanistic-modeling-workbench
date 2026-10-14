@@ -10,8 +10,9 @@ modeling system (`agent1-biochemical-curator` through
 
 See `docs/01_workbench_architecture.md` for the full architectural
 rationale (this repository was created from a read-only architecture audit
-of the existing five-agent system) and `docs/02_database_schema.md` for
-the complete schema.
+of the existing five-agent system), `docs/02_database_schema.md` for the
+complete schema, and `docs/03_workbench_harness_contract.md` for the
+Workbench <-> Harness invocation/result contract and run lifecycle.
 
 ## This repository's scope (current increment)
 
@@ -21,9 +22,17 @@ the complete schema.
 * A clean PostgreSQL + SQLAlchemy + Alembic migration baseline.
 * A matching persistence layer (idempotent create/reuse, lineage,
   resolution workflows, run lifecycle transitions).
-* Placeholder/interface-level contract shapes for future cross-repository
-  wiring (`app/contracts/`) -- **no live agent or harness calls exist
-  yet**.
+* **Live wiring to the integration harness** (`app/orchestration/`):
+  `submit_subproject_run` drives a real `RunRecord` through a genuine
+  subprocess invocation of the harness's own canonical entrypoint
+  (`agent-integration-harness/scripts/run_workbench_request.py`),
+  idempotent replay, and deterministic failure handling. No scientific
+  logic was added to either repository.
+* Placeholder/interface-level contract shapes still reserved for future
+  cross-repository wiring that remains unbuilt (`app/contracts/agent1.py`,
+  `app/contracts/agent2_build_request.py`) -- the
+  `ModelBuildRequest` -> Agent 2 gap is disclosed, not closed, in this
+  increment (see `docs/03_workbench_harness_contract.md`).
 
 ## Explicitly out of scope (owned elsewhere)
 
