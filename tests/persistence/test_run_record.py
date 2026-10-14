@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.models.enums import RunStage, RunStatus
+from app.persistence.model_build_request import persist_model_build_request
 from app.persistence.run_record import complete_run, create_run_record, get_run_record, start_run
 from tests.persistence.conftest import make_subproject_id
 
@@ -83,3 +86,29 @@ def test_run_history_is_append_only_across_multiple_runs(db_session):
         subproject_id=subproject_id, stage=RunStage.AGENT5, session=db_session
     )
     assert run_a.id != run_b.id
+
+
+def test_run_record_can_be_associated_with_a_model_build_request(db_session):
+    subproject_id = make_subproject_id(db_session)
+    mbr_id = persist_model_build_request(subproject_id=subproject_id, session=db_session).entity_id
+    run = create_run_record(
+        subproject_id=subproject_id,
+        stage=RunStage.AGENT2,
+        session=db_session,
+        model_build_request_id=mbr_id,
+    )
+    assert run.model_build_request_id == mbr_id
+
+
+def test_run_record_persists_structured_warnings(db_session):
+    subproject_id = make_subproject_id(db_session)
+    run = create_run_record(subproject_id=subproject_id, stage=RunStage.AGENT2, session=db_session)
+    start_run(run_record_id=run.id, session=db_session)
+    warnings = ["UNRESOLVED_REACTION_REFERENCE: ...", "UNSUPPORTED_PATHWAY_SCOPE: ..."]
+    completed = complete_run(
+        run_record_id=run.id,
+        status=RunStatus.SUCCEEDED,
+        session=db_session,
+        warnings=json.dumps(warnings),
+    )
+    assert json.loads(completed.warnings) == warnings

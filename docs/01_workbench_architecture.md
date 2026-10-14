@@ -48,8 +48,8 @@ recommended target architecture.
                     │  Model (artifact pointer)  │
                     │  RunRecord / DatasetRef.   │
                     └─────────────┬──────────────┘
-                                  │ invokes (future contract --
-                                  │ not implemented in this increment)
+                                  │ invokes (app.orchestration.run_orchestrator;
+                                  │ see docs/03_workbench_harness_contract.md)
                                   ▼
                     ┌───────────────────────────┐
                     │     Integration Harness     │
@@ -142,3 +142,19 @@ the five agent repositories or the integration harness. See
 `docs/02_database_schema.md` for the full schema and
 `app/contracts/` for the placeholder/interface-level shapes reserved for
 future cross-repository wiring.
+
+**Forward pointer (Scoped-Build Support increment).** The "future
+contract" referenced above now exists and is wired end to end:
+`app.orchestration.run_orchestrator.submit_subproject_run` invokes the
+harness for real, and -- new in this increment -- a persisted
+`ModelBuildRequest` can now actually scope what Agent 2 builds. See
+`docs/03_workbench_harness_contract.md`'s own "`ModelBuildRequest` ->
+Agent 2 scoped builds" section for the full contract, and
+`app/contracts/agent2_build_request.py` for the serializer (no longer a
+placeholder). The ownership boundary this document states above is
+unchanged by that increment: the Workbench still never persists Agent
+2's executable model content, and all scoping *logic* (what counts as a
+contradiction, which constraints are supported) lives in Agent 2's own
+`agent2-antimony-builder/app/agent2/build_request` package, not here --
+the Workbench only serializes user intent and stores the warnings Agent
+2 reports back.

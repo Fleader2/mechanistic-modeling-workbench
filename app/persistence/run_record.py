@@ -23,6 +23,7 @@ def create_run_record(
     stage: RunStage,
     session: Session,
     model_id: UUID | None = None,
+    model_build_request_id: UUID | None = None,
 ) -> RunRecord:
     """Create a new ``RunRecord`` in ``PENDING`` status.
 
@@ -31,7 +32,11 @@ def create_run_record(
     legitimately run many times for the same subproject).
     """
     row = RunRecord(
-        subproject_id=subproject_id, model_id=model_id, stage=stage, status=RunStatus.PENDING
+        subproject_id=subproject_id,
+        model_id=model_id,
+        model_build_request_id=model_build_request_id,
+        stage=stage,
+        status=RunStatus.PENDING,
     )
     session.add(row)
     session.flush()
@@ -64,11 +69,15 @@ def complete_run(
     artifact_reference: str | None = None,
     result_summary: str | None = None,
     error_summary: str | None = None,
+    warnings: str | None = None,
 ) -> RunRecord:
     """Transition a ``RunRecord`` to a terminal status (``SUCCEEDED``/``FAILED``).
 
     Raises ``ValueError`` if ``status`` is not terminal, or the record is
-    not currently ``RUNNING``.
+    not currently ``RUNNING``. ``warnings`` (Scoped-Build Support
+    increment) is a pre-serialized JSON string -- this function never
+    encodes/decodes it, matching ``artifact_reference``'s own
+    store-opaque-string policy.
     """
     if status not in (RunStatus.SUCCEEDED, RunStatus.FAILED):
         raise ValueError(f"complete_run requires a terminal status, got {status!r}")
@@ -84,6 +93,7 @@ def complete_run(
     row.artifact_reference = artifact_reference
     row.result_summary = result_summary
     row.error_summary = error_summary
+    row.warnings = warnings
     session.flush()
     return row
 

@@ -23,6 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.models.enums import RunStage, RunStatus
 from app.models.model import Model
+from app.models.model_build_request import ModelBuildRequest
 from app.models.subproject import Subproject
 
 _RUN_STAGE = Enum(RunStage, name="run_stage", create_type=False)
@@ -44,6 +45,19 @@ class RunRecord(Base):
     )
     model_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("model.id", ondelete="RESTRICT"), index=True
+    )
+    #: Scoped-Build Support increment: the ``ModelBuildRequest`` that scoped this run, when one
+    #: was supplied. Associated here rather than onto ``Model`` -- a ``Model`` row's own
+    #: lineage is independent of which specific run attempt built it, while ``RunRecord``
+    #: already records every other request parameter a run was invoked with (``model_id``).
+    model_build_request_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(
+            "model_build_request.id",
+            ondelete="RESTRICT",
+            name="fk_run_record_model_build_request_id_mbr",
+        ),
+        index=True,
     )
 
     stage: Mapped[RunStage] = mapped_column(_RUN_STAGE, nullable=False)
@@ -67,6 +81,11 @@ class RunRecord(Base):
 
     result_summary: Mapped[str | None] = mapped_column(Text)
     error_summary: Mapped[str | None] = mapped_column(Text)
+    #: Scoped-Build Support increment: a JSON-encoded list of warning strings a scoped build
+    #: returned (e.g. an unresolved ModelBuildRequest reference, an unsupported pathway
+    #: constraint) -- opaque to the Workbench, never parsed or interpreted here, matching
+    #: ``artifact_reference``'s own "store, never interpret" policy.
+    warnings: Mapped[str | None] = mapped_column(Text)
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -77,6 +96,7 @@ class RunRecord(Base):
 
     subproject: Mapped[Subproject] = relationship()
     model: Mapped[Model | None] = relationship()
+    model_build_request: Mapped[ModelBuildRequest | None] = relationship()
 
 
 __all__ = ["RunRecord"]

@@ -370,23 +370,35 @@ updated_at                     TIMESTAMP WITH TIME ZONE NOT NULL
 # Table: run_record
 
 ```text
-id                   UUID PRIMARY KEY
-subproject_id          UUID NOT NULL REFERENCES subproject(id) ON DELETE RESTRICT
+id                       UUID PRIMARY KEY
+subproject_id            UUID NOT NULL REFERENCES subproject(id) ON DELETE RESTRICT
 model_id                 UUID REFERENCES model(id) ON DELETE RESTRICT
-stage                     RunStage NOT NULL
-status                     RunStatus NOT NULL DEFAULT PENDING
-contract_version            VARCHAR     -- free text; never enforced/interpreted here
-artifact_reference            TEXT      -- opaque pointer to this run's output
-result_summary                 TEXT
-error_summary                    TEXT
-started_at                        TIMESTAMP WITH TIME ZONE
-completed_at                       TIMESTAMP WITH TIME ZONE
-created_at                           TIMESTAMP WITH TIME ZONE NOT NULL
+model_build_request_id   UUID REFERENCES model_build_request(id) ON DELETE RESTRICT
+stage                    RunStage NOT NULL
+status                   RunStatus NOT NULL DEFAULT PENDING
+contract_version         VARCHAR     -- free text; never enforced/interpreted here
+artifact_reference       TEXT        -- opaque pointer to this run's output
+result_summary           TEXT
+error_summary            TEXT
+warnings                 TEXT        -- opaque, JSON-encoded list of warning strings
+started_at               TIMESTAMP WITH TIME ZONE
+completed_at             TIMESTAMP WITH TIME ZONE
+created_at               TIMESTAMP WITH TIME ZONE NOT NULL
 ```
 
 Append-only: always a new row per invocation, never updated into a
 different identity. No `updated_at` -- `started_at`/`completed_at` already
 capture the lifecycle timestamps that matter.
+
+`model_build_request_id`/`warnings` were added by the Scoped-Build
+Support increment (migration `0002_run_record_build_request`): which
+`ModelBuildRequest` (if any) scoped this run, and any structured warning
+the harness/Agent 2 returned for it (an unresolved reference, an
+unsupported pathway constraint, ...). Both are additive and nullable --
+every pre-existing row is unaffected. Associated here, not on `model`,
+because a `Model` row's own durable lineage is independent of which
+specific run attempt built it, while `run_record` already records every
+other request parameter a run was invoked with (`model_id`).
 
 ---
 
@@ -407,7 +419,7 @@ project
    |       |       |
    |       |       +-- model (parent_model_id, self-referential lineage)
    |       |
-   |       +-- run_record (model_id optional)
+   |       +-- run_record (model_id / model_build_request_id optional)
    |
    +-- dataset_reference (subproject_id optional)
 
@@ -442,6 +454,7 @@ modeling_decision.selected_option_id
 modeling_decision_option.decision_id
 run_record.subproject_id
 run_record.model_id
+run_record.model_build_request_id
 ```
 
 ---

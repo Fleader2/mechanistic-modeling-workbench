@@ -102,6 +102,48 @@ def test_requires_exactly_one_stage1_input(db_session):
         )
 
 
+# --- Scoped-Build Support increment: real, end-to-end ModelBuildRequest wiring -------------
+
+
+@pytest.mark.skipif(_HARNESS_UNAVAILABLE is not None, reason=str(_HARNESS_UNAVAILABLE))
+def test_real_scoped_build_run_persists_model_build_request_id_and_warnings(db_session):
+    """A real, end-to-end run (no mocks) supplying ``model_build_request_id``: the Workbench
+    serializes the persisted ``ModelBuildRequest``, the harness forwards it to a real Agent 2
+    subprocess, and the resulting warning (the synthetic fixture's own reaction ids are plain
+    strings, not real Agent 1 UUIDs, so this request's own reference is unresolved by
+    design) round-trips back onto the ``RunRecord``."""
+    import json
+
+    from app.models.enums import ModelBuildRequestReactionRole
+    from app.persistence.model_build_request import add_reaction, persist_model_build_request
+
+    project_id, subproject_id = _make_ids(db_session)
+    mbr_id = persist_model_build_request(subproject_id=subproject_id, session=db_session).entity_id
+    add_reaction(
+        model_build_request_id=mbr_id,
+        role=ModelBuildRequestReactionRole.SEED,
+        session=db_session,
+        raw_identifier="reaction-1",
+    )
+
+    run_record = run_orchestrator.submit_subproject_run(
+        subproject_id=subproject_id,
+        project_id=project_id,
+        task_type="BUILD_MODEL",
+        session=db_session,
+        model_build_request_id=mbr_id,
+        stage4_request_path=str(_HARNESS_FIXTURES / "synthetic_stage4_request.json"),
+        stage5_request_path=str(_HARNESS_FIXTURES / "synthetic_stage5_request.json"),
+        synthetic_fixture_path=str(_HARNESS_FIXTURES / "synthetic_agent1_view.json"),
+    )
+
+    assert run_record.status is RunStatus.SUCCEEDED
+    assert run_record.model_build_request_id == mbr_id
+    assert run_record.warnings is not None
+    warnings = json.loads(run_record.warnings)
+    assert any("UNRESOLVED_RAW_IDENTIFIER" in w for w in warnings)
+
+
 def test_harness_subprocess_failure_completes_run_as_failed(db_session, monkeypatch):
     project_id, subproject_id = _make_ids(db_session)
 

@@ -28,11 +28,21 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
   (`agent-integration-harness/scripts/run_workbench_request.py`),
   idempotent replay, and deterministic failure handling. No scientific
   logic was added to either repository.
-* Placeholder/interface-level contract shapes still reserved for future
-  cross-repository wiring that remains unbuilt (`app/contracts/agent1.py`,
-  `app/contracts/agent2_build_request.py`) -- the
-  `ModelBuildRequest` -> Agent 2 gap is disclosed, not closed, in this
-  increment (see `docs/03_workbench_harness_contract.md`).
+* **`ModelBuildRequest` -> Agent 2 scoped builds** (Scoped-Build Support
+  increment): `submit_subproject_run(..., model_build_request_id=...)`
+  serializes a persisted `ModelBuildRequest`
+  (`app/contracts/agent2_build_request.py`, no longer a placeholder) and
+  forwards it through the harness to a real Agent 2 subprocess, which
+  restricts its own assembled network to that request's scope. Results
+  (`RunRecord.model_build_request_id`/`RunRecord.warnings`) are
+  persisted; Agent 2's executable model content is never copied into the
+  Workbench's own database. See
+  `docs/03_workbench_harness_contract.md` for the full contract and
+  `agent2-antimony-builder/docs/20_scoped_build_support.md` for the
+  canonical, cross-repository record of this increment.
+* `app/contracts/agent1.py` remains a placeholder/interface-level
+  contract shape reserved for future cross-repository wiring that
+  remains unbuilt.
 
 ## Explicitly out of scope (owned elsewhere)
 

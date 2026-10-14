@@ -51,7 +51,8 @@ Workbench:
    opaque JSON string on `RunRecord.artifact_reference`, and, when a
    `model_id` was supplied and the run succeeded, onto that `Model` row's
    own `artifact_reference`) and metadata (`contract_version`,
-   `result_summary`/`error_summary`);
+   `result_summary`/`error_summary`, and, since the Scoped-Build Support
+   increment, `warnings` -- see below);
 7. transition to `SUCCEEDED` or `FAILED`
    (`app.persistence.run_record.complete_run`).
 
@@ -137,18 +138,40 @@ a caller that wants to try again must explicitly start a new run (a new
 `RunRecord`/`run_id`), never something `submit_subproject_run` does on
 its own.
 
-## The disclosed `ModelBuildRequest` -> Agent 2 gap
+## `ModelBuildRequest` -> Agent 2 scoped builds (Scoped-Build Support increment)
 
-`model_build_request_id` can be passed through `submit_subproject_run` to
-the harness, which records it in the result's own `warnings` but does
-**not** act on it: Agent 2 has no mechanism to accept a scoped/partial
-build request, so every run currently builds against Agent 1's full
-curated knowledge view, unscoped. This increment does **not** invent a
-new Agent 2 scientific contract to close that gap -- doing so here would
-be exactly the kind of unreviewed scope creep the architecture audit
-exists to prevent. Closing it is future work, requiring either an
-extension to `Agent1CuratedKnowledgeViewContract` or a new,
-explicitly-designed Workbench -> Agent 2 contract (see
-`app/contracts/agent2_build_request.py`'s own placeholder shape, which
-remains exactly that -- a placeholder, not something any code path
-constructs or sends yet).
+`submit_subproject_run(..., model_build_request_id=<id>)` now closes the
+gap an earlier increment disclosed. When given:
+
+1. The persisted `ModelBuildRequest` (and its eight child collections) is
+   loaded and serialized by
+   `app.contracts.agent2_build_request.model_build_request_to_dict` into
+   the exact artifact shape Agent 2's own
+   `app.agent2.build_request.build_request_from_dict` parses
+   (`AGENT2_BUILD_REQUEST_CONTRACT_VERSION`, `"agent2-build-request-v1"`
+   -- a contract distinct from, and never confused with, this file's own
+   `CONTRACT_VERSION`/`WORKBENCH_HARNESS_CONTRACT_VERSION`).
+2. That serialized content is written to a private temporary file and
+   added to the harness request's own
+   `input_artifact_references["model_build_request"]` -- the harness
+   never receives a bare id it would have no way to resolve on its own
+   (it has no database access of any kind, including the Workbench's).
+   The temp file is removed immediately after the harness invocation
+   returns.
+3. The harness forwards that file's path to Agent 2's own runner, which
+   restricts its assembled network to the request's scope and reports
+   any resulting warning (an unresolved reference, a contradictory
+   constraint rejected outright, an unsupported pathway constraint, ...)
+   back through the harness's own `WorkbenchRunResult.warnings`.
+4. `RunRecord.model_build_request_id`/`RunRecord.warnings` (migration
+   `0002_run_record_build_request`) persist, respectively, which request
+   scoped the run and that warning list (JSON-encoded, opaque to the
+   Workbench -- never parsed or interpreted here, exactly like
+   `artifact_reference`).
+
+**What the Workbench still never does:** copy Agent 2's executable model
+content into its own database, interpret a `ModelBuildRequest`'s own
+scoping semantics, or decide what counts as a contradictory constraint --
+all of that logic lives in `agent2-antimony-builder/app/agent2
+/build_request`, not here. Omitting `model_build_request_id` reproduces
+every pre-existing run's exact behavior with no change whatsoever.
