@@ -17,7 +17,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from pydantic import ValidationError
-from sqlalchemy import Engine
+from sqlalchemy import Engine, event
 from sqlalchemy.orm import Session
 
 from app.config.settings import Settings, get_settings
@@ -134,15 +134,39 @@ def migrated_engine(settings: Settings, alembic_config: Config) -> Iterator[Engi
 
 @pytest.fixture
 def db_session(migrated_engine: Engine) -> Iterator[Session]:
-    """Session wrapped in a transaction that is rolled back after each test."""
+    """Session wrapped in a transaction that is rolled back after each test.
+
+    Joined into that outer transaction via a ``SAVEPOINT`` that is immediately restarted every
+    time the session itself ends a transaction (SQLAlchemy's own documented "joining a Session
+    into an external transaction" recipe for test suites) -- so test code that calls
+    ``session.commit()``/``session.rollback()`` (e.g. a Crash-Safe Resume increment test
+    simulating one logical operation's own separate transaction boundaries) gets real,
+    independent commit/rollback semantics *within* the test, while the outer ``transaction``
+    (rolled back in the ``finally`` block below, exactly as before) still guarantees nothing
+    this fixture ever produces is durable past the end of the test -- full isolation is
+    unchanged. Without this, a mid-test ``session.commit()`` does not create an independent
+    durability boundary at all (the externally-pre-begun outer transaction is the only thing
+    actually controlling the DBAPI transaction), so a *later* ``session.rollback()`` in the
+    same test incorrectly discards that earlier commit's own rows too -- confirmed directly
+    before this fix was added.
+    """
     connection = migrated_engine.connect()
     transaction = connection.begin()
     session = Session(bind=connection, autoflush=False, expire_on_commit=False)
+
+    nested = connection.begin_nested()
+
+    @event.listens_for(session, "after_transaction_end")
+    def _restart_savepoint(sess: Session, trans: object) -> None:
+        nonlocal nested
+        if not nested.is_active:
+            nested = connection.begin_nested()
 
     try:
         yield session
     finally:
         session.close()
+        event.remove(session, "after_transaction_end", _restart_savepoint)
         if transaction.is_active:
             transaction.rollback()
         connection.close()

@@ -170,8 +170,29 @@ class HierarchyReviewDecisionValue(StrEnum):
     REJECT = "REJECT"
 
 
+class HierarchyResumeAttemptStatus(StrEnum):
+    """The execution status of one ``HierarchyResumeAttempt`` (Crash-Safe Resume increment) --
+    modeled after ``RunStatus``'s own identical style, but deliberately a separate vocabulary:
+    an attempt's own ``IN_PROGRESS`` names "the harness resume subprocess call is in flight"
+    specifically (never a broader run stage), and an attempt has no ``REQUIRES_USER_REVIEW``
+    equivalent (review happens before an attempt ever exists).
+
+    ``PENDING``: created, not yet started. ``IN_PROGRESS``: the harness resume call is (or was
+    believed to be, until proven stale) in flight -- see ``app.persistence
+    .hierarchy_resume_attempt.is_attempt_stale``. ``SUCCEEDED``/``FAILED``: both reachable from
+    ``IN_PROGRESS``; unlike ``RunStatus``, ``FAILED`` here is explicitly retryable (transitions
+    back to ``IN_PROGRESS`` on a later retry) -- it is not a dead end.
+    """
+
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
 __all__ = [
     "ConfidenceClass",
+    "HierarchyResumeAttemptStatus",
     "HierarchyReviewDecisionValue",
     "ModelBuildRequestGeneProteinRole",
     "ModelBuildRequestPathwayRole",

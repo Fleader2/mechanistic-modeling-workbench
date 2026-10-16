@@ -13,6 +13,7 @@ does not need a real harness to be exercised correctly.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -22,15 +23,27 @@ from app.contracts.hierarchical_recursion import (
     HierarchicalRunStatus,
     HierarchyNodeSummary,
 )
-from app.models.enums import HierarchyReviewDecisionValue, RunStage, RunStatus
+from app.models.enums import (
+    HierarchyResumeAttemptStatus,
+    HierarchyReviewDecisionValue,
+    RunStage,
+    RunStatus,
+)
 from app.orchestration import hierarchical_review_orchestrator as review_orch
 from app.orchestration import hierarchical_run_orchestrator as run_orch
 from app.orchestration.hierarchical_harness_client import (
     HARNESS_REPO_DIR,
+    HierarchicalHarnessClientError,
     harness_is_available,
 )
 from app.persistence.hierarchy_checkpoint import get_current_checkpoint_for_run
 from app.persistence.hierarchy_node import list_hierarchy_nodes_for_run
+from app.persistence.hierarchy_resume_attempt import (
+    STALE_RESUME_ATTEMPT_THRESHOLD_SECONDS,
+    get_attempt_for_checkpoint,
+    get_or_create_resume_attempt,
+    mark_attempt_in_progress,
+)
 from app.persistence.run_record import create_run_record
 from tests.persistence.conftest import make_project_id, make_subproject_id
 
@@ -516,10 +529,12 @@ def test_repeated_resume_call_never_reinvokes_the_harness(db_session, monkeypatc
     assert resumed.status is RunStatus.SUCCEEDED
     assert call_count["n"] == 1
 
-    # The run is no longer REQUIRES_USER_REVIEW -- a second, repeated call for the identical
-    # pause is rejected before ever reaching the harness again (no duplicate child search).
-    with pytest.raises(ValueError, match="not REQUIRES_USER_REVIEW"):
-        review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+    # A second, repeated call for the identical (now-consumed, now-SUCCEEDED-attempt) checkpoint
+    # resolves idempotently to the same already-completed result -- never re-invoking the
+    # harness, never raising (Crash-Safe Resume increment, requirement 6).
+    repeated = review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+    assert repeated.status is RunStatus.SUCCEEDED
+    assert repeated.id == resumed.id
     assert call_count["n"] == 1  # the harness was never invoked a second time
 
 
@@ -579,11 +594,24 @@ def test_submitting_a_decision_against_an_already_consumed_checkpoint_is_rejecte
         )
 
 
-def test_resume_on_a_run_not_awaiting_review_raises(db_session):
+def test_resume_on_a_run_that_never_paused_raises(db_session):
     _project_id, subproject_id = _make_ids(db_session)
     run_record = create_run_record(
         subproject_id=subproject_id, stage=RunStage.HARNESS, session=db_session
     )
+    with pytest.raises(ValueError, match="no checkpoint"):
+        review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+
+
+def test_resume_on_a_paused_run_whose_status_diverged_externally_raises(db_session, monkeypatch):
+    """A checkpoint can exist (unconsumed) while the RunRecord's own status is, for whatever
+    reason, no longer REQUIRES_USER_REVIEW (e.g. an out-of-band administrative transition) --
+    distinct from the idempotent-already-succeeded case, this must still fail clearly."""
+    pending = (_pending_entry("p1", "modA"),)
+    run_record = _start_and_pause(db_session, monkeypatch, pending=pending)
+    run_record.status = RunStatus.FAILED
+    db_session.flush()
+
     with pytest.raises(ValueError, match="not REQUIRES_USER_REVIEW"):
         review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
 
@@ -692,6 +720,328 @@ def test_root_node_is_not_duplicated_across_pause_and_resume(db_session, monkeyp
     assert len(nodes) == 2
     root_nodes = [n for n in nodes if n.depth == 0]
     assert len(root_nodes) == 1
+
+
+# --- crash-safe resume (Crash-Safe Resume increment) ------------------------------------------
+
+
+def _decide_single(db_session, run_record, *, module_id="modA"):
+    items = review_orch.list_pending_review_items(db_session, run_record.id)
+    review_orch.submit_review_decision(
+        pending_review_item_id=items[0].id,
+        decision=HierarchyReviewDecisionValue.APPROVE,
+        session=db_session,
+    )
+    return items[0]
+
+
+def _succeeding_resume_result(request, *, extra_nodes=()):
+    return (
+        HierarchicalRunResult(
+            contract_version=CONTRACT_VERSION,
+            run_id=request.run_id,
+            status=HierarchicalRunStatus.SUCCEEDED,
+            root_model_id="m1",
+            nodes=(_root_node(), *extra_nodes),
+            total_nodes_created=1 + len(extra_nodes),
+            total_functional_evaluations_used=0,
+            total_calibration_runs_used=1,
+            requires_user_review=False,
+            pending_review_modules=(),
+            recursion_policy_version="hierarchical-recursion-v1",
+            started_at="2026-01-01T00:01:00+00:00",
+            completed_at="2026-01-01T00:01:05+00:00",
+            error=None,
+            summary="resumed",
+        ),
+        None,
+    )
+
+
+def test_successful_resume_transaction(db_session, monkeypatch):
+    pending = (_pending_entry("p1", "modA"),)
+    run_record = _start_and_pause(db_session, monkeypatch, pending=pending)
+    _decide_single(db_session, run_record)
+    checkpoint = get_current_checkpoint_for_run(db_session, run_record.id)
+
+    monkeypatch.setattr(
+        review_orch, "invoke_hierarchical_harness_resume", _succeeding_resume_result
+    )
+    resumed = review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+
+    assert resumed.status is RunStatus.SUCCEEDED
+    db_session.refresh(checkpoint)
+    assert checkpoint.consumed_at is not None
+    attempt = get_attempt_for_checkpoint(db_session, checkpoint.id)
+    assert attempt.status is HierarchyResumeAttemptStatus.SUCCEEDED
+    assert attempt.attempt_count == 1
+
+
+def test_harness_client_failure_leaves_checkpoint_reusable(db_session, monkeypatch):
+    pending = (_pending_entry("p1", "modA"),)
+    run_record = _start_and_pause(db_session, monkeypatch, pending=pending)
+    _decide_single(db_session, run_record)
+    checkpoint = get_current_checkpoint_for_run(db_session, run_record.id)
+
+    def _failing_invoke(request):
+        return None, HierarchicalHarnessClientError(
+            code="HARNESS_SUBPROCESS_TIMEOUT", message="did not complete in time"
+        )
+
+    monkeypatch.setattr(review_orch, "invoke_hierarchical_harness_resume", _failing_invoke)
+    result = review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+
+    # The run stays REQUIRES_USER_REVIEW -- the harness never produced a durable result, so
+    # nothing about this run's own completion state may change.
+    assert result.status is RunStatus.REQUIRES_USER_REVIEW
+    db_session.refresh(checkpoint)
+    assert checkpoint.consumed_at is None
+    attempt = get_attempt_for_checkpoint(db_session, checkpoint.id)
+    assert attempt.status is HierarchyResumeAttemptStatus.FAILED
+    assert "HARNESS_SUBPROCESS_TIMEOUT" in attempt.error_summary
+
+    # Retrying with a now-succeeding harness call completes normally.
+    monkeypatch.setattr(
+        review_orch, "invoke_hierarchical_harness_resume", _succeeding_resume_result
+    )
+    retried = review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+    assert retried.status is RunStatus.SUCCEEDED
+
+
+def test_harness_reported_failure_leaves_checkpoint_reusable(db_session, monkeypatch):
+    pending = (_pending_entry("p1", "modA"),)
+    run_record = _start_and_pause(db_session, monkeypatch, pending=pending)
+    _decide_single(db_session, run_record)
+    checkpoint = get_current_checkpoint_for_run(db_session, run_record.id)
+
+    def _rejected_invoke(request):
+        from app.contracts.hierarchical_recursion import HierarchicalRunError
+
+        return (
+            HierarchicalRunResult(
+                contract_version=CONTRACT_VERSION,
+                run_id=request.run_id,
+                status=HierarchicalRunStatus.FAILED,
+                root_model_id=None,
+                nodes=(),
+                total_nodes_created=0,
+                total_functional_evaluations_used=0,
+                total_calibration_runs_used=0,
+                requires_user_review=False,
+                pending_review_modules=(),
+                recursion_policy_version="",
+                started_at="2026-01-01T00:01:00+00:00",
+                completed_at="2026-01-01T00:01:01+00:00",
+                error=HierarchicalRunError(code="CHECKPOINT_REJECTED", message="stale checkpoint"),
+                summary="rejected",
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(review_orch, "invoke_hierarchical_harness_resume", _rejected_invoke)
+    result = review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+
+    assert result.status is RunStatus.REQUIRES_USER_REVIEW
+    db_session.refresh(checkpoint)
+    assert checkpoint.consumed_at is None
+    attempt = get_attempt_for_checkpoint(db_session, checkpoint.id)
+    assert attempt.status is HierarchyResumeAttemptStatus.FAILED
+    assert attempt.error_summary == "stale checkpoint"
+
+
+def test_crash_after_attempt_creation_before_subprocess_return_is_recoverable(
+    db_session, monkeypatch
+):
+    """Simulates a process that durably committed the attempt as IN_PROGRESS (phase 1) and then
+    died before ever invoking the harness. A later recovery call must detect the now-stale
+    IN_PROGRESS attempt and retry it successfully."""
+    pending = (_pending_entry("p1", "modA"),)
+    run_record = _start_and_pause(db_session, monkeypatch, pending=pending)
+    _decide_single(db_session, run_record)
+    checkpoint = get_current_checkpoint_for_run(db_session, run_record.id)
+
+    # Simulate phase 1 having already run and committed in a now-dead process.
+    attempt = get_or_create_resume_attempt(
+        hierarchy_checkpoint_id=checkpoint.id, session=db_session
+    )
+    attempt = mark_attempt_in_progress(attempt.id, db_session)
+    db_session.commit()
+    # Backdate started_at past the staleness threshold, as if real time had actually elapsed.
+    attempt.started_at = datetime.now(UTC) - timedelta(
+        seconds=STALE_RESUME_ATTEMPT_THRESHOLD_SECONDS + 60
+    )
+    db_session.flush()
+
+    monkeypatch.setattr(
+        review_orch, "invoke_hierarchical_harness_resume", _succeeding_resume_result
+    )
+    recovered = review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+    assert recovered.status is RunStatus.SUCCEEDED
+
+    db_session.refresh(attempt)
+    assert attempt.status is HierarchyResumeAttemptStatus.SUCCEEDED
+    assert attempt.attempt_count == 2  # the original (stale) start, plus this retry
+
+
+def test_fresh_in_progress_attempt_is_not_stale_and_blocks_concurrent_resume(
+    db_session, monkeypatch
+):
+    pending = (_pending_entry("p1", "modA"),)
+    run_record = _start_and_pause(db_session, monkeypatch, pending=pending)
+    _decide_single(db_session, run_record)
+    checkpoint = get_current_checkpoint_for_run(db_session, run_record.id)
+
+    attempt = get_or_create_resume_attempt(
+        hierarchy_checkpoint_id=checkpoint.id, session=db_session
+    )
+    mark_attempt_in_progress(attempt.id, db_session)
+    db_session.commit()
+
+    with pytest.raises(review_orch.ResumeAttemptInProgressError):
+        review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+
+
+def test_crash_after_harness_return_before_checkpoint_consumption_is_recoverable(
+    db_session, monkeypatch
+):
+    """Simulates a crash between obtaining a successful harness result and durably marking the
+    checkpoint consumed -- the whole second phase must roll back atomically, and a retry must
+    complete cleanly without duplicating anything."""
+    pending = (_pending_entry("p1", "modA"),)
+    run_record = _start_and_pause(db_session, monkeypatch, pending=pending)
+    _decide_single(db_session, run_record)
+    checkpoint = get_current_checkpoint_for_run(db_session, run_record.id)
+
+    child_node = _root_node(node_id="node::depth1::modA::000001", depth=1, parent_module_id="modA")
+    monkeypatch.setattr(
+        review_orch,
+        "invoke_hierarchical_harness_resume",
+        lambda request: _succeeding_resume_result(request, extra_nodes=(child_node,)),
+    )
+
+    call_count = {"n": 0}
+    real_mark_consumed = review_orch.mark_checkpoint_consumed
+
+    def _flaky_mark_consumed(session, checkpoint_id):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("simulated crash before checkpoint consumption")
+        return real_mark_consumed(session, checkpoint_id)
+
+    monkeypatch.setattr(review_orch, "mark_checkpoint_consumed", _flaky_mark_consumed)
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+
+    # The whole second phase (new nodes, RunRecord transition) rolled back atomically.
+    db_session.refresh(run_record)
+    assert run_record.status is RunStatus.REQUIRES_USER_REVIEW
+    db_session.refresh(checkpoint)
+    assert checkpoint.consumed_at is None
+    nodes_after_crash = list_hierarchy_nodes_for_run(db_session, run_record.id)
+    assert len(nodes_after_crash) == 1  # only the original root node
+
+    attempt = get_attempt_for_checkpoint(db_session, checkpoint.id)
+    assert attempt.status is HierarchyResumeAttemptStatus.FAILED
+
+    # Retry: succeeds cleanly, and nothing is duplicated.
+    retried = review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+    assert retried.status is RunStatus.SUCCEEDED
+    final_nodes = list_hierarchy_nodes_for_run(db_session, run_record.id)
+    assert len(final_nodes) == 2  # root + the one new child, not duplicated
+    db_session.refresh(checkpoint)
+    assert checkpoint.consumed_at is not None
+    db_session.refresh(attempt)
+    assert attempt.status is HierarchyResumeAttemptStatus.SUCCEEDED
+
+
+def test_old_checkpoint_rejected_after_successful_successor_persistence(db_session, monkeypatch):
+    pending = (_pending_entry("p1", "modA"),)
+    run_record = _start_and_pause(db_session, monkeypatch, pending=pending)
+    old_checkpoint = get_current_checkpoint_for_run(db_session, run_record.id)
+    _decide_single(db_session, run_record)
+
+    def _pauses_again(request):
+        return (
+            HierarchicalRunResult(
+                contract_version=CONTRACT_VERSION,
+                run_id=request.run_id,
+                status=HierarchicalRunStatus.SUCCEEDED,
+                root_model_id="m1",
+                nodes=(_root_node(),),
+                total_nodes_created=1,
+                total_functional_evaluations_used=0,
+                total_calibration_runs_used=1,
+                requires_user_review=True,
+                pending_review_modules=(
+                    {
+                        "pending_id": "p2",
+                        "parent_node_id": "node::depth0::root::000000",
+                        "module_id": "modA1",
+                        "depth": 1,
+                        "reaction_count": 1,
+                    },
+                ),
+                recursion_policy_version="hierarchical-recursion-v1",
+                started_at="2026-01-01T00:01:00+00:00",
+                completed_at="2026-01-01T00:01:05+00:00",
+                error=None,
+                summary="paused again",
+                checkpoint={
+                    "checkpoint_version": "hierarchical-recursion-checkpoint-v1",
+                    "policy_version": "hierarchical-recursion-v1",
+                    "hierarchy_id": "hierarchical-recursion::test-run",
+                    "root_model_id": "m1",
+                },
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(review_orch, "invoke_hierarchical_harness_resume", _pauses_again)
+    resumed = review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+    assert resumed.status is RunStatus.REQUIRES_USER_REVIEW
+
+    new_checkpoint = get_current_checkpoint_for_run(db_session, run_record.id)
+    assert new_checkpoint.id != old_checkpoint.id
+    assert new_checkpoint.sequence == old_checkpoint.sequence + 1
+
+    db_session.refresh(old_checkpoint)
+    assert old_checkpoint.consumed_at is not None  # the old checkpoint is durably spent
+
+    # The old checkpoint is structurally unreachable as "current" -- the only lookup this
+    # module ever performs -- so it can never be resumed again.
+    assert get_current_checkpoint_for_run(db_session, run_record.id).id == new_checkpoint.id
+
+
+def test_fresh_session_recovery_of_an_in_progress_attempt(db_session, monkeypatch):
+    pending = (_pending_entry("p1", "modA"),)
+    run_record = _start_and_pause(db_session, monkeypatch, pending=pending)
+    _decide_single(db_session, run_record)
+    checkpoint = get_current_checkpoint_for_run(db_session, run_record.id)
+
+    attempt = get_or_create_resume_attempt(
+        hierarchy_checkpoint_id=checkpoint.id, session=db_session
+    )
+    mark_attempt_in_progress(attempt.id, db_session)
+    db_session.commit()
+
+    # Simulate a fresh process: drop every in-memory object and re-query from the database.
+    db_session.expire_all()
+    reloaded_attempt = review_orch.get_resume_attempt_status(db_session, run_record.id)
+    assert reloaded_attempt is not None
+    assert reloaded_attempt.status is HierarchyResumeAttemptStatus.IN_PROGRESS
+
+    # Mark it stale from this "fresh" vantage point and recover it.
+    reloaded_attempt.started_at = datetime.now(UTC) - timedelta(
+        seconds=STALE_RESUME_ATTEMPT_THRESHOLD_SECONDS + 60
+    )
+    db_session.flush()
+
+    monkeypatch.setattr(
+        review_orch, "invoke_hierarchical_harness_resume", _succeeding_resume_result
+    )
+    recovered = review_orch.resume_hierarchical_run(run_record_id=run_record.id, session=db_session)
+    assert recovered.status is RunStatus.SUCCEEDED
 
 
 # --- final hierarchy retrieval ---------------------------------------------------------------

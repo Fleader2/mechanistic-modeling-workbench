@@ -149,6 +149,17 @@ APPROVE
 REJECT
 ```
 
+### HierarchyResumeAttemptStatus
+Added by the Crash-Safe Resume increment (migration `0005_resume_attempt`). Modeled after
+`RunStatus`'s own style, but a deliberately separate vocabulary -- see `docs/06_crash_safe_
+resume.md`.
+```text
+PENDING
+IN_PROGRESS
+SUCCEEDED
+FAILED
+```
+
 ---
 
 # Table: project
@@ -517,6 +528,28 @@ table's own constraints alone -- see `app.persistence.hierarchy_review_decision`
 
 ---
 
+# Table: hierarchy_resume_attempt
+
+```text
+id                       UUID PRIMARY KEY
+hierarchy_checkpoint_id  UUID NOT NULL UNIQUE REFERENCES hierarchy_checkpoint(id) ON DELETE CASCADE
+status                   HierarchyResumeAttemptStatus NOT NULL DEFAULT PENDING
+attempt_count            INTEGER NOT NULL DEFAULT 0
+started_at               TIMESTAMP WITH TIME ZONE
+completed_at             TIMESTAMP WITH TIME ZONE
+error_summary            TEXT
+created_at               TIMESTAMP WITH TIME ZONE NOT NULL
+updated_at               TIMESTAMP WITH TIME ZONE NOT NULL
+```
+
+Added by the Crash-Safe Resume increment (migration `0005_resume_attempt`): at most one row
+per checkpoint (`hierarchy_checkpoint_id` is itself unique -- the idempotency key a repeated
+resume request for the identical checkpoint always resolves against), `ON DELETE CASCADE` from
+`hierarchy_checkpoint`. See `docs/06_crash_safe_resume.md` for the full state machine and the
+crash-safety design this table exists to support.
+
+---
+
 # Relationships
 
 ```text
@@ -540,9 +573,12 @@ project
    |               |
    |               +-- hierarchy_checkpoint (ON DELETE CASCADE)
    |                       |
+   |                       |
    |                       +-- hierarchy_pending_review_item (ON DELETE CASCADE)
-   |                               |
-   |                               +-- hierarchy_review_decision (ON DELETE CASCADE)
+   |                       |       |
+   |                       |       +-- hierarchy_review_decision (ON DELETE CASCADE)
+   |                       |
+   |                       +-- hierarchy_resume_attempt (ON DELETE CASCADE)
    |
    +-- dataset_reference (subproject_id optional)
 
@@ -581,6 +617,7 @@ run_record.model_build_request_id
 hierarchy_node.run_record_id
 hierarchy_checkpoint.run_record_id
 hierarchy_pending_review_item.hierarchy_checkpoint_id
+hierarchy_resume_attempt.hierarchy_checkpoint_id
 ```
 
 ---
@@ -608,6 +645,7 @@ hierarchy_node                                 (cascades from run_record)
 hierarchy_checkpoint                           (cascades from run_record)
 hierarchy_pending_review_item                  (cascades from hierarchy_checkpoint)
 hierarchy_review_decision                      (cascades from hierarchy_pending_review_item)
+hierarchy_resume_attempt                       (cascades from hierarchy_checkpoint)
 ```
 
 `model.parent_model_id` restricts (a prior model version must not be

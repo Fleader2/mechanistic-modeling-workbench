@@ -61,6 +61,14 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
   (`agent-integration-harness/scripts/run_workbench_hierarchical_resume_request.py`). No
   resume/checkpoint logic is duplicated here -- every decision is still made entirely inside
   `app.harness.hierarchical_recursion`. See `docs/05_hierarchical_review_resume.md`.
+* **Crash-Safe Resume** (`HierarchyResumeAttempt`, same orchestrator): closes the failure
+  window where a checkpoint could be marked consumed before the harness resume call actually,
+  durably succeeded. `resume_hierarchical_run` now owns two explicit transaction boundaries --
+  commit a durable `IN_PROGRESS` attempt *before* invoking the harness, then persist the result
+  and consume the prior checkpoint in one all-or-nothing transaction *after* -- so a crash
+  during the (possibly multi-minute) subprocess call always leaves the checkpoint reusable and
+  the attempt safely retryable, never a permanently stuck run. No Harness or Agent2/3/4/5
+  changes. See `docs/06_crash_safe_resume.md`.
 
 ## Explicitly out of scope (owned elsewhere)
 
