@@ -400,6 +400,42 @@ because a `Model` row's own durable lineage is independent of which
 specific run attempt built it, while `run_record` already records every
 other request parameter a run was invoked with (`model_id`).
 
+# Table: hierarchy_node
+
+```text
+id                                  UUID PRIMARY KEY
+run_record_id                       UUID NOT NULL REFERENCES run_record(id) ON DELETE CASCADE
+node_id                             VARCHAR NOT NULL   -- the harness's own node_id string
+depth                                INTEGER NOT NULL
+parent_modularization_id            TEXT        -- NULL only for the root node (depth 0)
+parent_module_id                    TEXT
+child_submodel_id                   TEXT        -- the materialized submodel's own model_id
+child_modularization_id             TEXT        -- the accepted candidate's own id, or NULL
+child_module_ids                    TEXT        -- opaque, JSON-encoded list of module ids
+accepted                            BOOLEAN NOT NULL
+reason                              TEXT NOT NULL
+baseline_score                      NUMERIC     -- the degenerate "intact parent" baseline
+child_score                         NUMERIC     -- the accepted/best-attempted candidate's score
+branch_stopping_reason              VARCHAR     -- NULL for an accepted node that keeps descending
+recursive_search_stopping_reason    VARCHAR NOT NULL
+recursive_search_rounds             INTEGER NOT NULL
+recursive_search_policy_version     VARCHAR NOT NULL
+created_at                          TIMESTAMP WITH TIME ZONE NOT NULL
+```
+
+Added by the Automatic Hierarchical Recursive Modularization increment (migration
+`0003_hierarchy_node`): one row per node of one hierarchical-recursion `run_record` (recorded
+with `stage=RunStage.HARNESS`, the identical stage the `FULL_PIPELINE` workflow already uses --
+a hierarchical-recursion run is distinguished from a `FULL_PIPELINE` one only by whether any
+`hierarchy_node` rows exist for it). `ON DELETE CASCADE`, unlike every other FK on this table's
+own parent `run_record`: a `HierarchyNode` has no independent existence apart from the run that
+produced it, unlike e.g. a `Model` row's own durable lineage (`RESTRICT`). Every field a UI
+needs to render the accepted module tree, stopped branches, scores, and reasons is its own
+typed, queryable column; `child_module_ids` is the one list-shaped field still stored as an
+opaque, JSON-encoded string (a UI needing it already has every child node's own
+`parent_module_id`, so this column is redundant provenance, not the tree's own structural
+backbone).
+
 ---
 
 # Relationships
@@ -420,6 +456,8 @@ project
    |       |       +-- model (parent_model_id, self-referential lineage)
    |       |
    |       +-- run_record (model_id / model_build_request_id optional)
+   |               |
+   |               +-- hierarchy_node (ON DELETE CASCADE)
    |
    +-- dataset_reference (subproject_id optional)
 
@@ -455,6 +493,7 @@ modeling_decision_option.decision_id
 run_record.subproject_id
 run_record.model_id
 run_record.model_build_request_id
+hierarchy_node.run_record_id
 ```
 
 ---

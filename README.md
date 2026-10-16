@@ -43,6 +43,14 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
 * `app/contracts/agent1.py` remains a placeholder/interface-level
   contract shape reserved for future cross-repository wiring that
   remains unbuilt.
+* **Automatic Hierarchical Recursive Modularization** (`HierarchyNode`, `app/orchestration
+  /hierarchical_run_orchestrator.py`): a second, genuinely separate live wiring to the
+  integration harness -- `submit_hierarchical_run` drives a real `RunRecord` through a genuine
+  subprocess invocation of the harness's own second canonical entrypoint
+  (`agent-integration-harness/scripts/run_workbench_hierarchical_request.py`), persisting the
+  full accepted-module tree (every node's own acceptance decision, score, and stopping reason)
+  as first-class, queryable `HierarchyNode` rows rather than an opaque JSON blob -- no UI yet,
+  but no JSON-parsing required to build one later. See `docs/04_hierarchical_recursion.md`.
 
 ## Explicitly out of scope (owned elsewhere)
 
