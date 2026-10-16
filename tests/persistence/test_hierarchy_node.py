@@ -117,6 +117,25 @@ def test_list_hierarchy_nodes_for_run_is_scoped_to_one_run(db_session):
     assert nodes_run1[0].child_modularization_id == "cand-root"
 
 
+def test_create_hierarchy_nodes_is_idempotent_on_repeated_node_ids(db_session):
+    """Hierarchical Review/Resume increment: a second call that re-reports an already-persisted
+    node_id (as every resumed run's own result does for its completed nodes) inserts only the
+    genuinely new ones."""
+    run = _make_run(db_session)
+    first = create_hierarchy_nodes(run_record_id=run.id, nodes=[_root_node()], session=db_session)
+    assert len(first) == 1
+
+    second = create_hierarchy_nodes(
+        run_record_id=run.id, nodes=[_root_node(), _child_node()], session=db_session
+    )
+    assert len(second) == 1  # only the new child was inserted; the root was skipped
+    assert second[0].depth == 1
+
+    all_nodes = list_hierarchy_nodes_for_run(db_session, run.id)
+    assert len(all_nodes) == 2
+    assert len([n for n in all_nodes if n.depth == 0]) == 1
+
+
 def test_hierarchy_nodes_are_deleted_when_run_record_is_deleted(db_session):
     run = _make_run(db_session)
     create_hierarchy_nodes(run_record_id=run.id, nodes=[_root_node()], session=db_session)

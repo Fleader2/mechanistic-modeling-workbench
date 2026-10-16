@@ -15,6 +15,10 @@ a copied identifier, never a constraint-enforced relationship.
 
 from app.db.base import Base
 from app.models.dataset_reference import DatasetReference
+from app.models.hierarchy_checkpoint import HierarchyCheckpoint
+from app.models.hierarchy_node import HierarchyNode
+from app.models.hierarchy_pending_review_item import HierarchyPendingReviewItem
+from app.models.hierarchy_review_decision import HierarchyReviewDecision
 from app.models.model import Model
 from app.models.model_build_request import (
     ModelBuildRequest,
@@ -35,6 +39,10 @@ from app.models.subproject import Subproject
 __all__ = [
     "Base",
     "DatasetReference",
+    "HierarchyCheckpoint",
+    "HierarchyNode",
+    "HierarchyPendingReviewItem",
+    "HierarchyReviewDecision",
     "Model",
     "ModelBuildRequest",
     "ModelBuildRequestAssumption",

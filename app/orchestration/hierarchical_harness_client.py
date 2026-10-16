@@ -20,15 +20,22 @@ from pathlib import Path
 
 from app.contracts.hierarchical_recursion import (
     HierarchicalInvocationRequest,
+    HierarchicalResumeRequest,
     HierarchicalRunResult,
     request_to_dict,
     result_from_dict,
+    resume_request_to_dict,
 )
 
 _PROJECTS_ROOT = Path(__file__).resolve().parents[3]
 HARNESS_REPO_DIR = _PROJECTS_ROOT / "agent-integration-harness"
 HARNESS_VENV_PYTHON = HARNESS_REPO_DIR / ".venv" / "bin" / "python3"
 HARNESS_ENTRYPOINT = HARNESS_REPO_DIR / "scripts" / "run_workbench_hierarchical_request.py"
+#: Hierarchical Review/Resume increment -- a second, genuinely separate canonical entrypoint,
+#: mirroring ``HARNESS_ENTRYPOINT``'s own identical discipline exactly.
+HARNESS_RESUME_ENTRYPOINT = (
+    HARNESS_REPO_DIR / "scripts" / "run_workbench_hierarchical_resume_request.py"
+)
 
 #: Generous but finite -- a real multi-level hierarchy genuinely runs several subprocess rounds
 #: per node; this is not a retry budget, just a ceiling so a truly hung subprocess cannot block
@@ -46,9 +53,9 @@ class HierarchicalHarnessClientError:
     message: str
 
 
-def harness_is_available() -> HierarchicalHarnessClientError | None:
-    """``None`` if the sibling harness repository, its venv, and this specific entrypoint are
-    usable; otherwise a structured reason they are not."""
+def _entrypoint_available(entrypoint: Path) -> HierarchicalHarnessClientError | None:
+    """``None`` if the sibling harness repository, its venv, and ``entrypoint`` are usable;
+    otherwise a structured reason they are not."""
     if not HARNESS_REPO_DIR.is_dir():
         return HierarchicalHarnessClientError(
             code="HARNESS_REPO_NOT_FOUND",
@@ -59,41 +66,40 @@ def harness_is_available() -> HierarchicalHarnessClientError | None:
             code="HARNESS_VENV_NOT_FOUND",
             message=f"Harness venv interpreter does not exist: {HARNESS_VENV_PYTHON}",
         )
-    if not HARNESS_ENTRYPOINT.is_file():
+    if not entrypoint.is_file():
         return HierarchicalHarnessClientError(
             code="HARNESS_ENTRYPOINT_NOT_FOUND",
-            message=(
-                f"Harness hierarchical-recursion entrypoint does not exist: {HARNESS_ENTRYPOINT}"
-            ),
+            message=f"Harness hierarchical-recursion entrypoint does not exist: {entrypoint}",
         )
     return None
 
 
-def invoke_hierarchical_harness(
-    request: HierarchicalInvocationRequest,
+def harness_is_available() -> HierarchicalHarnessClientError | None:
+    """``None`` if the sibling harness repository, its venv, and the initial-invocation
+    entrypoint are usable; otherwise a structured reason they are not."""
+    return _entrypoint_available(HARNESS_ENTRYPOINT)
+
+
+def harness_resume_is_available() -> HierarchicalHarnessClientError | None:
+    """``None`` if the sibling harness repository, its venv, and the resume entrypoint
+    (Hierarchical Review/Resume increment) are usable; otherwise a structured reason they are
+    not."""
+    return _entrypoint_available(HARNESS_RESUME_ENTRYPOINT)
+
+
+def _run_entrypoint(
+    *, entrypoint: Path, payload: dict
 ) -> tuple[HierarchicalRunResult | None, HierarchicalHarnessClientError | None]:
-    """Invoke the harness's hierarchical-recursion canonical entrypoint for one
-    ``HierarchicalInvocationRequest``.
-
-    Returns ``(result, None)`` on any outcome the harness itself was able to report as a parsed
-    ``HierarchicalRunResult`` -- including a result whose own ``status`` is ``FAILED``, which is
-    not a client error, it is the harness's own honest report. Returns ``(None, error)`` only
-    when no such result could be obtained at all.
-    """
-    unavailable = harness_is_available()
-    if unavailable is not None:
-        return None, unavailable
-
     with tempfile.TemporaryDirectory(prefix="workbench-hierarchical-request-") as tmpdir:
         request_path = Path(tmpdir) / "request.json"
         output_path = Path(tmpdir) / "result.json"
-        request_path.write_text(json.dumps(request_to_dict(request)))
+        request_path.write_text(json.dumps(payload))
 
         try:
             subprocess.run(
                 [
                     str(HARNESS_VENV_PYTHON),
-                    str(HARNESS_ENTRYPOINT),
+                    str(entrypoint),
                     "--request",
                     str(request_path),
                     "--output",
@@ -136,11 +142,45 @@ def invoke_hierarchical_harness(
         return result, None
 
 
+def invoke_hierarchical_harness(
+    request: HierarchicalInvocationRequest,
+) -> tuple[HierarchicalRunResult | None, HierarchicalHarnessClientError | None]:
+    """Invoke the harness's hierarchical-recursion canonical entrypoint for one
+    ``HierarchicalInvocationRequest``.
+
+    Returns ``(result, None)`` on any outcome the harness itself was able to report as a parsed
+    ``HierarchicalRunResult`` -- including a result whose own ``status`` is ``FAILED``, which is
+    not a client error, it is the harness's own honest report. Returns ``(None, error)`` only
+    when no such result could be obtained at all.
+    """
+    unavailable = harness_is_available()
+    if unavailable is not None:
+        return None, unavailable
+    return _run_entrypoint(entrypoint=HARNESS_ENTRYPOINT, payload=request_to_dict(request))
+
+
+def invoke_hierarchical_harness_resume(
+    request: HierarchicalResumeRequest,
+) -> tuple[HierarchicalRunResult | None, HierarchicalHarnessClientError | None]:
+    """Invoke the harness's hierarchical-recursion *resume* canonical entrypoint for one
+    ``HierarchicalResumeRequest`` (Hierarchical Review/Resume increment) -- otherwise identical
+    discipline to ``invoke_hierarchical_harness``."""
+    unavailable = harness_resume_is_available()
+    if unavailable is not None:
+        return None, unavailable
+    return _run_entrypoint(
+        entrypoint=HARNESS_RESUME_ENTRYPOINT, payload=resume_request_to_dict(request)
+    )
+
+
 __all__ = [
     "HARNESS_ENTRYPOINT",
     "HARNESS_REPO_DIR",
+    "HARNESS_RESUME_ENTRYPOINT",
     "HARNESS_VENV_PYTHON",
     "HierarchicalHarnessClientError",
     "harness_is_available",
+    "harness_resume_is_available",
     "invoke_hierarchical_harness",
+    "invoke_hierarchical_harness_resume",
 ]

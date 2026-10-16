@@ -16,7 +16,17 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,9 +37,21 @@ from app.models.run_record import RunRecord
 class HierarchyNode(Base):
     """One ``HierarchyNodeRecord`` (``agent-integration-harness/app/harness
     .hierarchical_recursion.types``), persisted verbatim under the ``RunRecord`` that produced
-    it."""
+    it.
+
+    ``(run_record_id, node_id)`` is unique (Hierarchical Review/Resume increment): a resumed
+    run's own harness result always carries forward every already-completed node unchanged, so
+    ``app.persistence.hierarchy_node.create_hierarchy_nodes`` must insert only genuinely new
+    nodes on each resume -- this constraint is the database-level backstop for that
+    idempotency, never relied on as the primary mechanism (see that function's own docstring).
+    """
 
     __tablename__ = "hierarchy_node"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_record_id", "node_id", name="uq_hierarchy_node_run_record_id_node_id"
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 

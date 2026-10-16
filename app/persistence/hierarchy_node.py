@@ -24,15 +24,29 @@ def create_hierarchy_nodes(
     nodes: list[dict],
     session: Session,
 ) -> list[HierarchyNode]:
-    """Bulk-insert every node of one run's own ``WorkbenchHierarchicalRunResult.nodes`` --
-    always a fresh insert (a ``RunRecord`` is never re-run in place; a replayed harness
-    invocation never reaches this function at all, see
-    ``app.orchestration.hierarchical_run_orchestrator``).
+    """Insert every node of ``nodes`` not already persisted for ``run_record_id``.
+
+    A fresh (non-resumed) run's own first call always inserts every node, exactly as before.
+    Hierarchical Review/Resume increment: a *resumed* run's own harness result carries forward
+    every already-completed node unchanged (same ``node_id``) ahead of any genuinely new ones
+    -- calling this function again after a resume must insert only the new ones, never
+    re-insert (let alone duplicate) a completed node. This is enforced by filtering against
+    already-persisted ``node_id``s before inserting (the primary mechanism); the
+    ``uq_hierarchy_node_run_record_id_node_id`` database constraint is only a backstop against
+    a caller that fails to filter, never relied on here to silently absorb a duplicate.
 
     Each ``nodes[i]`` is one plain dict shaped like
     ``app.contracts.hierarchical_recursion.HierarchyNodeSummary`` (already parsed from the
     harness's own JSON response) -- never a raw harness dict passed through unvalidated.
     """
+    existing_node_ids = {
+        row.node_id
+        for row in session.execute(
+            select(HierarchyNode.node_id).where(HierarchyNode.run_record_id == run_record_id)
+        )
+    }
+    new_nodes = [node for node in nodes if node["node_id"] not in existing_node_ids]
+
     rows = [
         HierarchyNode(
             run_record_id=run_record_id,
@@ -60,7 +74,7 @@ def create_hierarchy_nodes(
             recursive_search_rounds=node["recursive_search_rounds"],
             recursive_search_policy_version=node["recursive_search_policy_version"],
         )
-        for node in nodes
+        for node in new_nodes
     ]
     session.add_all(rows)
     session.flush()

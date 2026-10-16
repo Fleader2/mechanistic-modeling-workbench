@@ -134,8 +134,19 @@ HARNESS
 ```text
 PENDING
 RUNNING
+REQUIRES_USER_REVIEW
 SUCCEEDED
 FAILED
+```
+`REQUIRES_USER_REVIEW` (Hierarchical Review/Resume increment) is a non-terminal pause between
+`RUNNING` and (`SUCCEEDED`/`FAILED`) -- added as a new `run_status` enum value by migration
+`0004_checkpoint_review` (one-way in PostgreSQL, identical precedent to
+`agent1-biochemical-curator`'s `0016_gotenzymes_source`).
+
+### HierarchyReviewDecisionValue
+```text
+APPROVE
+REJECT
 ```
 
 ---
@@ -436,6 +447,74 @@ opaque, JSON-encoded string (a UI needing it already has every child node's own
 `parent_module_id`, so this column is redundant provenance, not the tree's own structural
 backbone).
 
+`(run_record_id, node_id)` is unique (added by migration `0004_checkpoint_review`): the
+database-level idempotency backstop so a resumed run's own already-completed nodes are never
+re-inserted (see `docs/05_hierarchical_review_resume.md`).
+
+---
+
+# Table: hierarchy_checkpoint
+
+```text
+id                   UUID PRIMARY KEY
+run_record_id        UUID NOT NULL REFERENCES run_record(id) ON DELETE CASCADE
+sequence             INTEGER NOT NULL   -- 0 for the first pause; +1 per resume-then-re-pause
+checkpoint_version   VARCHAR NOT NULL   -- denormalized copy of payload's own field
+policy_version       VARCHAR NOT NULL   -- denormalized copy of payload's own field
+hierarchy_id         VARCHAR NOT NULL   -- denormalized copy of payload's own field
+payload              TEXT NOT NULL      -- the harness's own serialize_checkpoint(...) dict, verbatim
+consumed_at          TIMESTAMP WITH TIME ZONE   -- set once a resume attempt used this checkpoint
+created_at           TIMESTAMP WITH TIME ZONE NOT NULL
+```
+
+`(run_record_id, sequence)` is unique. Added by the Hierarchical Review/Resume increment
+(migration `0004_checkpoint_review`): one row per pause of one hierarchical-recursion
+`run_record`, `ON DELETE CASCADE` (identical "no independent existence apart from the run"
+precedent as `hierarchy_node`). `payload` is opaque -- never parsed or interpreted here except
+to pass back, unchanged, to the harness's own resume call. The *current* checkpoint for a run
+is the row with the maximum `sequence`; `consumed_at IS NOT NULL` marks it stale (already used
+by a resume attempt, so it can never be resumed again). See
+`docs/05_hierarchical_review_resume.md`.
+
+---
+
+# Table: hierarchy_pending_review_item
+
+```text
+id                       UUID PRIMARY KEY
+hierarchy_checkpoint_id  UUID NOT NULL REFERENCES hierarchy_checkpoint(id) ON DELETE CASCADE
+pending_id               TEXT NOT NULL   -- the harness's own stable identifier for this module
+parent_node_id           TEXT NOT NULL   -- the harness's own node_id of the parent node
+module_id                TEXT NOT NULL   -- the content-addressed module id awaiting review
+depth                    INTEGER NOT NULL
+reaction_count           INTEGER
+created_at               TIMESTAMP WITH TIME ZONE NOT NULL
+```
+
+`(hierarchy_checkpoint_id, pending_id)` is unique. Added by the Hierarchical Review/Resume
+increment: one row per entry of one checkpoint's own `pending_review_modules`, `ON DELETE
+CASCADE` from `hierarchy_checkpoint`. Every field a UI needs to list pending modules is its own
+typed column -- never only an entry inside `hierarchy_checkpoint.payload`.
+
+---
+
+# Table: hierarchy_review_decision
+
+```text
+id                       UUID PRIMARY KEY
+pending_review_item_id   UUID NOT NULL UNIQUE REFERENCES hierarchy_pending_review_item(id) ON DELETE CASCADE
+decision                 HierarchyReviewDecisionValue NOT NULL
+decided_by               VARCHAR   -- free text; no user-account system exists yet, never an FK
+notes                    TEXT
+decided_at               TIMESTAMP WITH TIME ZONE NOT NULL
+```
+
+Added by the Hierarchical Review/Resume increment: exactly one decision per pending item
+(`pending_review_item_id` is itself unique, not just indexed), `ON DELETE CASCADE` from
+`hierarchy_pending_review_item`. Idempotency (resubmitting the identical decision is a no-op;
+resubmitting a different one is rejected) is enforced at the application level, not by this
+table's own constraints alone -- see `app.persistence.hierarchy_review_decision`.
+
 ---
 
 # Relationships
@@ -458,6 +537,12 @@ project
    |       +-- run_record (model_id / model_build_request_id optional)
    |               |
    |               +-- hierarchy_node (ON DELETE CASCADE)
+   |               |
+   |               +-- hierarchy_checkpoint (ON DELETE CASCADE)
+   |                       |
+   |                       +-- hierarchy_pending_review_item (ON DELETE CASCADE)
+   |                               |
+   |                               +-- hierarchy_review_decision (ON DELETE CASCADE)
    |
    +-- dataset_reference (subproject_id optional)
 
@@ -494,6 +579,8 @@ run_record.subproject_id
 run_record.model_id
 run_record.model_build_request_id
 hierarchy_node.run_record_id
+hierarchy_checkpoint.run_record_id
+hierarchy_pending_review_item.hierarchy_checkpoint_id
 ```
 
 ---
@@ -517,6 +604,10 @@ model_build_request_enzyme_state              (cascades from model_build_request
 model_build_request_pathway                   (cascades from model_build_request)
 model_build_request_assumption                (cascades from model_build_request)
 modeling_decision_option                       (cascades from modeling_decision)
+hierarchy_node                                 (cascades from run_record)
+hierarchy_checkpoint                           (cascades from run_record)
+hierarchy_pending_review_item                  (cascades from hierarchy_checkpoint)
+hierarchy_review_decision                      (cascades from hierarchy_pending_review_item)
 ```
 
 `model.parent_model_id` restricts (a prior model version must not be

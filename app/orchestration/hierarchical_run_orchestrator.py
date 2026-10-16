@@ -24,13 +24,26 @@ from sqlalchemy.orm import Session
 from app.contracts.hierarchical_recursion import (
     CONTRACT_VERSION,
     HierarchicalInvocationRequest,
+    HierarchicalRunResult,
     HierarchicalRunStatus,
     node_summary_to_dict,
 )
 from app.models.enums import RunStage, RunStatus
+from app.models.run_record import RunRecord
 from app.orchestration.hierarchical_harness_client import invoke_hierarchical_harness
+from app.persistence.hierarchy_checkpoint import (
+    create_hierarchy_checkpoint,
+    get_current_checkpoint_for_run,
+)
 from app.persistence.hierarchy_node import create_hierarchy_nodes
-from app.persistence.run_record import complete_run, create_run_record, get_run_record, start_run
+from app.persistence.hierarchy_pending_review_item import create_pending_review_items
+from app.persistence.run_record import (
+    complete_run,
+    create_run_record,
+    get_run_record,
+    pause_run_for_review,
+    start_run,
+)
 
 
 def submit_hierarchical_run(
@@ -126,7 +139,27 @@ def submit_hierarchical_run(
         )
 
     assert result is not None  # invoke_hierarchical_harness's own contract
+    return persist_result_and_transition(
+        run_record_id=run_record.id, result=result, session=session
+    )
 
+
+def persist_result_and_transition(
+    *, run_record_id: UUID, result: HierarchicalRunResult, session: Session
+) -> RunRecord:
+    """Shared completion path for one harness-reported ``HierarchicalRunResult`` -- used by
+    both the initial invocation (above) and, Hierarchical Review/Resume increment, by
+    ``app.orchestration.hierarchical_review_orchestrator.resume_hierarchical_run`` after a
+    resume call reports its own new result.
+
+    Always inserts any newly-reported ``HierarchyNode`` rows (idempotent -- see
+    ``app.persistence.hierarchy_node.create_hierarchy_nodes``'s own docstring) **before**
+    transitioning the ``RunRecord``, so a terminal/paused status never precedes its own node
+    set being fully persisted. When the result itself paused for review
+    (``requires_user_review=True``), persists a new ``HierarchyCheckpoint`` (at the next
+    ``sequence`` for this run) plus its own pending-review items, and transitions to
+    ``REQUIRES_USER_REVIEW`` instead of a terminal status.
+    """
     artifact_payload = json.dumps(
         {
             "root_model_id": result.root_model_id,
@@ -142,12 +175,37 @@ def submit_hierarchical_run(
 
     if result.status is HierarchicalRunStatus.SUCCEEDED:
         create_hierarchy_nodes(
-            run_record_id=run_record.id,
+            run_record_id=run_record_id,
             nodes=[node_summary_to_dict(n) for n in result.nodes],
             session=session,
         )
+
+        if result.requires_user_review:
+            assert result.checkpoint is not None  # the harness's own contract guarantee
+            current_checkpoint = get_current_checkpoint_for_run(session, run_record_id)
+            next_sequence = 0 if current_checkpoint is None else current_checkpoint.sequence + 1
+            checkpoint_row = create_hierarchy_checkpoint(
+                run_record_id=run_record_id,
+                sequence=next_sequence,
+                checkpoint_payload=result.checkpoint,
+                session=session,
+            )
+            create_pending_review_items(
+                hierarchy_checkpoint_id=checkpoint_row.id,
+                pending_review_modules=[dict(m) for m in result.pending_review_modules],
+                session=session,
+            )
+            return pause_run_for_review(
+                run_record_id=run_record_id,
+                session=session,
+                contract_version=result.contract_version,
+                artifact_reference=artifact_payload,
+                result_summary=result.summary,
+                warnings=warnings_payload,
+            )
+
         return complete_run(
-            run_record_id=run_record.id,
+            run_record_id=run_record_id,
             status=RunStatus.SUCCEEDED,
             session=session,
             contract_version=result.contract_version,
@@ -158,7 +216,7 @@ def submit_hierarchical_run(
 
     error_message = result.summary if result.error is None else result.error.message
     return complete_run(
-        run_record_id=run_record.id,
+        run_record_id=run_record_id,
         status=RunStatus.FAILED,
         session=session,
         contract_version=result.contract_version,
@@ -168,4 +226,4 @@ def submit_hierarchical_run(
     )
 
 
-__all__ = ["submit_hierarchical_run"]
+__all__ = ["persist_result_and_transition", "submit_hierarchical_run"]

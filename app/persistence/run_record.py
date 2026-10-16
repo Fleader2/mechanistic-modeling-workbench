@@ -60,6 +60,51 @@ def start_run(*, run_record_id: UUID, session: Session) -> RunRecord:
     return row
 
 
+def pause_run_for_review(
+    *,
+    run_record_id: UUID,
+    session: Session,
+    contract_version: str | None = None,
+    artifact_reference: str | None = None,
+    result_summary: str | None = None,
+    warnings: str | None = None,
+) -> RunRecord:
+    """Transition a ``RunRecord`` from ``RUNNING`` to ``REQUIRES_USER_REVIEW`` (Hierarchical
+    Review/Resume increment) -- a non-terminal pause, never ``completed_at``-stamped (the run
+    is not done; it is waiting). Raises ``ValueError`` if the record is not currently
+    ``RUNNING``.
+    """
+    row = session.get(RunRecord, run_record_id)
+    if row is None:
+        raise ValueError(f"no RunRecord with id {run_record_id}")
+    if row.status is not RunStatus.RUNNING:
+        raise ValueError(f"RunRecord {run_record_id} is {row.status}, not RUNNING")
+
+    row.status = RunStatus.REQUIRES_USER_REVIEW
+    row.contract_version = contract_version
+    row.artifact_reference = artifact_reference
+    row.result_summary = result_summary
+    row.warnings = warnings
+    session.flush()
+    return row
+
+
+def resume_run(*, run_record_id: UUID, session: Session) -> RunRecord:
+    """Transition a ``RunRecord`` from ``REQUIRES_USER_REVIEW`` back to ``RUNNING``
+    (Hierarchical Review/Resume increment) -- the identical re-entry point ``start_run`` already
+    is for a fresh ``PENDING`` run. Raises ``ValueError`` if the record is not currently
+    ``REQUIRES_USER_REVIEW``.
+    """
+    row = session.get(RunRecord, run_record_id)
+    if row is None:
+        raise ValueError(f"no RunRecord with id {run_record_id}")
+    if row.status is not RunStatus.REQUIRES_USER_REVIEW:
+        raise ValueError(f"RunRecord {run_record_id} is {row.status}, not REQUIRES_USER_REVIEW")
+    row.status = RunStatus.RUNNING
+    session.flush()
+    return row
+
+
 def complete_run(
     *,
     run_record_id: UUID,
@@ -103,4 +148,11 @@ def get_run_record(session: Session, run_record_id: UUID) -> RunRecord | None:
     return session.get(RunRecord, run_record_id)
 
 
-__all__ = ["complete_run", "create_run_record", "get_run_record", "start_run"]
+__all__ = [
+    "complete_run",
+    "create_run_record",
+    "get_run_record",
+    "pause_run_for_review",
+    "resume_run",
+    "start_run",
+]

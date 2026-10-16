@@ -142,16 +142,37 @@ class RunStage(StrEnum):
 
 
 class RunStatus(StrEnum):
-    """The execution status of one ``RunRecord``."""
+    """The execution status of one ``RunRecord``.
+
+    ``REQUIRES_USER_REVIEW`` (Hierarchical Review/Resume increment): a non-terminal status
+    between ``RUNNING`` and (``SUCCEEDED``/``FAILED``) -- the run paused because the
+    underlying harness invocation returned ``requires_user_review=True``. A run in this status
+    always has a current, unconsumed ``HierarchyCheckpoint`` row; resuming it transitions back
+    through ``RUNNING`` exactly like the initial invocation did (see
+    ``app.persistence.run_record.resume_run``/``pause_run_for_review``).
+    """
 
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    REQUIRES_USER_REVIEW = "REQUIRES_USER_REVIEW"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
 
 
+class HierarchyReviewDecisionValue(StrEnum):
+    """One reviewer decision for one pending hierarchical-recursion review item (Hierarchical
+    Review/Resume increment). The Workbench's own copy of the identical vocabulary
+    ``agent-integration-harness/app/harness/hierarchical_recursion.types.HumanReviewDecision``
+    already defines -- never imported across repositories, see this module's own docstring.
+    """
+
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+
+
 __all__ = [
     "ConfidenceClass",
+    "HierarchyReviewDecisionValue",
     "ModelBuildRequestGeneProteinRole",
     "ModelBuildRequestPathwayRole",
     "ModelBuildRequestReactionRole",

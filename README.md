@@ -51,6 +51,16 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
   full accepted-module tree (every node's own acceptance decision, score, and stopping reason)
   as first-class, queryable `HierarchyNode` rows rather than an opaque JSON blob -- no UI yet,
   but no JSON-parsing required to build one later. See `docs/04_hierarchical_recursion.md`.
+* **Hierarchical Review/Resume** (`HierarchyCheckpoint`/`HierarchyPendingReviewItem`/
+  `HierarchyReviewDecision`, `app/orchestration/hierarchical_review_orchestrator.py`): makes a
+  paused (`RunStatus.REQUIRES_USER_REVIEW`) hierarchical-recursion run a durable, resumable
+  Workbench workflow -- the harness's own checkpoint is persisted verbatim, pending modules are
+  first-class rows a UI can list, APPROVE/REJECT decisions are recorded idempotently, and
+  `resume_hierarchical_run` passes the stored checkpoint plus decisions back to the harness's
+  own second, genuinely separate canonical entrypoint
+  (`agent-integration-harness/scripts/run_workbench_hierarchical_resume_request.py`). No
+  resume/checkpoint logic is duplicated here -- every decision is still made entirely inside
+  `app.harness.hierarchical_recursion`. See `docs/05_hierarchical_review_resume.md`.
 
 ## Explicitly out of scope (owned elsewhere)
 

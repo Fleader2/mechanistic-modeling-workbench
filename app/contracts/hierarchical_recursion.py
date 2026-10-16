@@ -104,7 +104,9 @@ class HierarchyNodeSummary:
 
 @dataclass(frozen=True, slots=True)
 class HierarchicalRunResult:
-    """What the harness reports back for one ``HierarchicalInvocationRequest``.
+    """What the harness reports back for one ``HierarchicalInvocationRequest`` (or, Hierarchical
+    Review/Resume increment, one ``HierarchicalResumeRequest`` -- the two share this identical
+    result shape).
 
     Maps directly onto ``app.persistence.run_record.complete_run``'s own keyword arguments plus
     ``app.persistence.hierarchy_node.create_hierarchy_nodes`` -- ``app.orchestration
@@ -128,6 +130,12 @@ class HierarchicalRunResult:
     summary: str
     warnings: tuple[str, ...] = ()
     replayed: bool = False
+    #: Hierarchical Review/Resume increment: the harness's own, verbatim-opaque
+    #: ``serialize_checkpoint(...)`` dict -- populated only when ``requires_user_review`` is
+    #: ``True``. This repository stores it exactly as received (``app.persistence
+    #: .hierarchy_checkpoint``) and passes it back, unchanged, as
+    #: ``HierarchicalResumeRequest.checkpoint`` to resume this run later. Never reinterpreted.
+    checkpoint: dict | None = None
 
 
 def request_to_dict(request: HierarchicalInvocationRequest) -> dict:
@@ -208,7 +216,47 @@ def result_from_dict(data: dict) -> HierarchicalRunResult:
         summary=data.get("summary", ""),
         warnings=tuple(data.get("warnings", ())),
         replayed=bool(data.get("replayed", False)),
+        checkpoint=data.get("checkpoint"),
     )
+
+
+#: Hierarchical Review/Resume increment -- a second, genuinely separate contract from
+#: ``CONTRACT_VERSION`` (that one names the *initial* invocation; this one names resuming a
+#: paused run). Must match the harness's own
+#: ``WORKBENCH_HIERARCHICAL_RESUME_CONTRACT_VERSION`` exactly.
+RESUME_CONTRACT_VERSION = "workbench-hierarchical-resume-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class HierarchicalResumeRequest:
+    """What the Workbench sends to resume one paused hierarchical-recursion run.
+
+    ``checkpoint`` is this repository's own stored copy of a prior ``HierarchicalRunResult
+    .checkpoint`` (``app.persistence.hierarchy_checkpoint``), passed back verbatim -- never
+    reconstructed or edited. ``decisions`` maps each pending entry's own ``pending_id`` (as the
+    paused run's own ``pending_review_modules`` reported it) to ``"APPROVE"``/``"REJECT"``.
+    """
+
+    contract_version: str
+    run_id: str
+    checkpoint: dict
+    decisions: dict[str, str]
+    correlation_id: str | None = None
+    notes: str | None = None
+    submitted_at: str | None = None
+
+
+def resume_request_to_dict(request: HierarchicalResumeRequest) -> dict:
+    """Serialize a ``HierarchicalResumeRequest`` to a plain, JSON-ready dict."""
+    return {
+        "contract_version": request.contract_version,
+        "run_id": request.run_id,
+        "checkpoint": request.checkpoint,
+        "decisions": dict(request.decisions),
+        "correlation_id": request.correlation_id,
+        "notes": request.notes,
+        "submitted_at": request.submitted_at,
+    }
 
 
 def node_summary_to_dict(node: HierarchyNodeSummary) -> dict:
@@ -235,7 +283,9 @@ def node_summary_to_dict(node: HierarchyNodeSummary) -> dict:
 
 __all__ = [
     "CONTRACT_VERSION",
+    "RESUME_CONTRACT_VERSION",
     "HierarchicalInvocationRequest",
+    "HierarchicalResumeRequest",
     "HierarchicalRunError",
     "HierarchicalRunResult",
     "HierarchicalRunStatus",
@@ -243,4 +293,5 @@ __all__ = [
     "node_summary_to_dict",
     "request_to_dict",
     "result_from_dict",
+    "resume_request_to_dict",
 ]
