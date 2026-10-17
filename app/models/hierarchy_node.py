@@ -107,6 +107,15 @@ class HierarchyNode(Base):
     recursive_search_rounds: Mapped[int] = mapped_column(Integer, nullable=False)
     recursive_search_policy_version: Mapped[str] = mapped_column(String, nullable=False)
 
+    #: Executable-Module Materialization increment: the exact, opaque, JSON-encoded
+    #: ``{"modularization_id", "module_ids", "memberships"}`` payload the harness used to
+    #: materialize *this* node's own submodel -- ``None`` for the root node and for a node
+    #: never actually materialized (``MODULE_TOO_SMALL``/``HUMAN_REVIEW_REJECTED``). Never
+    #: parsed or interpreted here except to pass it back, unchanged, to the harness's own
+    #: module-simulation entrypoint (see ``app.models.model_module.ModelModule
+    #: .attach_payload``, which copies this verbatim).
+    attach_payload: Mapped[str | None] = mapped_column(Text)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -73,6 +73,9 @@ def create_hierarchy_nodes(
             recursive_search_stopping_reason=node["recursive_search_stopping_reason"],
             recursive_search_rounds=node["recursive_search_rounds"],
             recursive_search_policy_version=node["recursive_search_policy_version"],
+            attach_payload=(
+                None if not node.get("attach_payload") else json.dumps(node["attach_payload"])
+            ),
         )
         for node in new_nodes
     ]

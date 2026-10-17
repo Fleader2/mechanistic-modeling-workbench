@@ -100,6 +100,13 @@ class HierarchyNodeSummary:
     recursive_search_stopping_reason: str
     recursive_search_rounds: int
     recursive_search_policy_version: str
+    #: Executable-Module Materialization increment: the exact payload that was used to
+    #: materialize *this* node's own submodel (``None`` for the root node and for a node never
+    #: actually materialized) -- see ``app.harness.hierarchical_recursion.types
+    #: .HierarchyNodeRecord.attach_payload``'s own docstring (sibling harness repository).
+    #: Stored verbatim (``app.models.hierarchy_node.HierarchyNode.attach_payload``) and later
+    #: passed back, unchanged, to request an Agent 3 simulation of exactly this module.
+    attach_payload: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +208,7 @@ def result_from_dict(data: dict) -> HierarchicalRunResult:
                 recursive_search_stopping_reason=n["recursive_search_stopping_reason"],
                 recursive_search_rounds=n["recursive_search_rounds"],
                 recursive_search_policy_version=n["recursive_search_policy_version"],
+                attach_payload=n.get("attach_payload"),
             )
             for n in data.get("nodes", ())
         ),
@@ -278,6 +286,7 @@ def node_summary_to_dict(node: HierarchyNodeSummary) -> dict:
         "recursive_search_stopping_reason": node.recursive_search_stopping_reason,
         "recursive_search_rounds": node.recursive_search_rounds,
         "recursive_search_policy_version": node.recursive_search_policy_version,
+        "attach_payload": node.attach_payload,
     }
 
 

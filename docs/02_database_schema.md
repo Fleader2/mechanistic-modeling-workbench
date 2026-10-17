@@ -396,6 +396,7 @@ id                       UUID PRIMARY KEY
 subproject_id            UUID NOT NULL REFERENCES subproject(id) ON DELETE RESTRICT
 model_id                 UUID REFERENCES model(id) ON DELETE RESTRICT
 model_build_request_id   UUID REFERENCES model_build_request(id) ON DELETE RESTRICT
+model_module_id          UUID REFERENCES model_module(id) ON DELETE RESTRICT
 stage                    RunStage NOT NULL
 status                   RunStatus NOT NULL DEFAULT PENDING
 contract_version         VARCHAR     -- free text; never enforced/interpreted here
@@ -422,6 +423,11 @@ because a `Model` row's own durable lineage is independent of which
 specific run attempt built it, while `run_record` already records every
 other request parameter a run was invoked with (`model_id`).
 
+`model_module_id` was added by the Executable-Module Materialization increment (migration
+`0006_model_module`): which `ModelModule` (if any) an Agent 3 run simulated -- set only for a
+module-simulation run (`stage=RunStage.AGENT3`); `NULL` for every other stage, including an
+ordinary whole-model Agent 3 run inside `FULL_PIPELINE`.
+
 # Table: hierarchy_node
 
 ```text
@@ -442,8 +448,16 @@ branch_stopping_reason              VARCHAR     -- NULL for an accepted node tha
 recursive_search_stopping_reason    VARCHAR NOT NULL
 recursive_search_rounds             INTEGER NOT NULL
 recursive_search_policy_version     VARCHAR NOT NULL
+attach_payload                      TEXT        -- opaque; NULL for the root and never-materialized nodes
 created_at                          TIMESTAMP WITH TIME ZONE NOT NULL
 ```
+
+`attach_payload` was added by the Executable-Module Materialization increment (migration
+`0006_model_module`): the exact, opaque payload the harness used to materialize that node's own
+submodel, threaded through from the harness's own new `HierarchyNodeRecord.attach_payload`
+field -- `NULL` for the root node (depth 0) and for a node never actually materialized
+(`MODULE_TOO_SMALL`/`HUMAN_REVIEW_REJECTED`). Never parsed here except to pass it back,
+unchanged, to the harness's own module-simulation entrypoint; see `model_module` below.
 
 Added by the Automatic Hierarchical Recursive Modularization increment (migration
 `0003_hierarchy_node`): one row per node of one hierarchical-recursion `run_record` (recorded
@@ -550,6 +564,35 @@ crash-safety design this table exists to support.
 
 ---
 
+# Table: model_module
+
+```text
+id                         UUID PRIMARY KEY
+run_record_id              UUID NOT NULL REFERENCES run_record(id) ON DELETE RESTRICT
+hierarchy_node_id          UUID NOT NULL UNIQUE REFERENCES hierarchy_node(id) ON DELETE RESTRICT
+parent_model_module_id     UUID REFERENCES model_module(id) ON DELETE RESTRICT
+root_model_id              UUID REFERENCES model(id) ON DELETE RESTRICT
+depth                      INTEGER NOT NULL
+module_id                  TEXT NOT NULL      -- content-addressed
+source_modularization_id   TEXT NOT NULL
+child_submodel_id          TEXT               -- denormalized from the producing hierarchy_node
+attach_payload             TEXT NOT NULL      -- opaque; copied verbatim from hierarchy_node
+created_at                 TIMESTAMP WITH TIME ZONE NOT NULL
+```
+
+Added by the Executable-Module Materialization increment (migration `0006_model_module`): one
+row per depth>=1 `hierarchy_node` that was genuinely materialized (`attach_payload IS NOT
+NULL`). `ON DELETE RESTRICT` everywhere, unlike every `CASCADE`-deleted table the Hierarchical
+Review/Resume increment added -- a `ModelModule` is a durable, independently-referenceable
+execution target, the identical precedent `model` itself already uses, never the "no
+independent existence apart from its parent" precedent. `hierarchy_node_id` is itself unique
+(1:1 with the node that produced it) -- the idempotency key repeated materialization calls
+(every resume/replay) always resolve against. `parent_model_module_id` is `NULL` when this
+module's own parent is the root model itself (the root is never represented as its own
+`model_module` row). See `docs/07_executable_module_materialization.md`.
+
+---
+
 # Relationships
 
 ```text
@@ -579,6 +622,12 @@ project
    |                       |       +-- hierarchy_review_decision (ON DELETE CASCADE)
    |                       |
    |                       +-- hierarchy_resume_attempt (ON DELETE CASCADE)
+   |               |
+   |               +-- model_module (ON DELETE RESTRICT; 1:1 with a materialized hierarchy_node)
+   |                       |
+   |                       +-- model_module (parent_model_module_id, self-referential lineage)
+   |                       |
+   |                       +-- run_record (model_module_id, an Agent 3 simulation of it)
    |
    +-- dataset_reference (subproject_id optional)
 
@@ -618,6 +667,8 @@ hierarchy_node.run_record_id
 hierarchy_checkpoint.run_record_id
 hierarchy_pending_review_item.hierarchy_checkpoint_id
 hierarchy_resume_attempt.hierarchy_checkpoint_id
+model_module.run_record_id
+run_record.model_module_id
 ```
 
 ---
@@ -653,3 +704,10 @@ deleted while a later version still names it as its parent).
 `subproject.project_id`, `model.subproject_id`, `run_record.subproject_id`,
 and `dataset_reference.project_id`/`subproject_id` all restrict -- a
 project/subproject with any dependent row cannot be deleted outright.
+
+`model_module` restricts everywhere (`run_record_id`/`hierarchy_node_id`/
+`parent_model_module_id`/`root_model_id`), and `run_record.model_module_id` restricts too --
+deliberately the odd one out among the Hierarchical Review/Resume increment's own all-`CASCADE`
+additions: a `ModelModule` is a durable, independently-referenceable execution target (the
+identical "has its own lineage" precedent `model` already uses), never ephemeral workflow
+bookkeeping.

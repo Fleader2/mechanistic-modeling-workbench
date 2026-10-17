@@ -32,6 +32,7 @@ from app.models.model_build_request import (
     ModelBuildRequestRegulatoryInteraction,
     ModelBuildRequestSpecies,
 )
+from app.models.model_module import ModelModule
 from app.models.modeling_decision import ModelingDecision, ModelingDecisionOption
 from app.models.project import Project
 from app.models.run_record import RunRecord
@@ -55,6 +56,7 @@ __all__ = [
     "ModelBuildRequestReaction",
     "ModelBuildRequestRegulatoryInteraction",
     "ModelBuildRequestSpecies",
+    "ModelModule",
     "ModelingDecision",
     "ModelingDecisionOption",
     "Project",

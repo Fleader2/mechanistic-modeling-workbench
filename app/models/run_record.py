@@ -14,6 +14,7 @@ whatever artifact/contract version it produced.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, func
@@ -25,6 +26,14 @@ from app.models.enums import RunStage, RunStatus
 from app.models.model import Model
 from app.models.model_build_request import ModelBuildRequest
 from app.models.subproject import Subproject
+
+if TYPE_CHECKING:
+    # Executable-Module Materialization increment: type-checking-only, to avoid a real circular
+    # import (``model_module.py`` itself imports ``RunRecord``) -- resolved at runtime purely
+    # by name via ``relationship(foreign_keys=...)`` below, never actually evaluated as a bare
+    # annotation (``from __future__ import annotations`` keeps every annotation a deferred
+    # string).
+    from app.models.model_module import ModelModule
 
 _RUN_STAGE = Enum(RunStage, name="run_stage", create_type=False)
 _RUN_STATUS = Enum(RunStatus, name="run_status", create_type=False)
@@ -57,6 +66,15 @@ class RunRecord(Base):
             ondelete="RESTRICT",
             name="fk_run_record_model_build_request_id_mbr",
         ),
+        index=True,
+    )
+    #: Executable-Module Materialization increment: the ``ModelModule`` this run simulated --
+    #: set only for a module-simulation run (``stage=RunStage.AGENT3``, Agent 2 then Agent 3
+    #: against one accepted hierarchy module's own artifact); ``NULL`` for every other stage,
+    #: including an ordinary whole-model Agent 3 run as part of ``FULL_PIPELINE``.
+    model_module_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("model_module.id", ondelete="RESTRICT", name="fk_run_record_model_module_id_mm"),
         index=True,
     )
 
@@ -97,6 +115,9 @@ class RunRecord(Base):
     subproject: Mapped[Subproject] = relationship()
     model: Mapped[Model | None] = relationship()
     model_build_request: Mapped[ModelBuildRequest | None] = relationship()
+    model_module: Mapped[ModelModule | None] = relationship(
+        foreign_keys="RunRecord.model_module_id"
+    )
 
 
 __all__ = ["RunRecord"]

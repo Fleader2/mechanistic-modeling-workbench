@@ -37,6 +37,7 @@ from app.persistence.hierarchy_checkpoint import (
 )
 from app.persistence.hierarchy_node import create_hierarchy_nodes
 from app.persistence.hierarchy_pending_review_item import create_pending_review_items
+from app.persistence.model_module import materialize_accepted_modules
 from app.persistence.run_record import (
     complete_run,
     create_run_record,
@@ -140,12 +141,21 @@ def submit_hierarchical_run(
 
     assert result is not None  # invoke_hierarchical_harness's own contract
     return persist_result_and_transition(
-        run_record_id=run_record.id, result=result, session=session
+        run_record_id=run_record.id,
+        result=result,
+        session=session,
+        agent1_organism_id=agent1_organism_id,
+        stage1_synthetic_source=synthetic_fixture_path,
     )
 
 
 def persist_result_and_transition(
-    *, run_record_id: UUID, result: HierarchicalRunResult, session: Session
+    *,
+    run_record_id: UUID,
+    result: HierarchicalRunResult,
+    session: Session,
+    agent1_organism_id: str | None = None,
+    stage1_synthetic_source: str | None = None,
 ) -> RunRecord:
     """Shared completion path for one harness-reported ``HierarchicalRunResult`` -- used by
     both the initial invocation (above) and, Hierarchical Review/Resume increment, by
@@ -159,7 +169,37 @@ def persist_result_and_transition(
     (``requires_user_review=True``), persists a new ``HierarchyCheckpoint`` (at the next
     ``sequence`` for this run) plus its own pending-review items, and transitions to
     ``REQUIRES_USER_REVIEW`` instead of a terminal status.
+
+    **Executable-Module Materialization increment**: on success, also idempotently
+    materializes a ``ModelModule`` row for every newly-accepted, depth>=1 ``HierarchyNode``
+    (``app.persistence.model_module.materialize_accepted_modules``) -- never duplicated across
+    a resumed/replayed call, see that function's own docstring. ``agent1_organism_id``/
+    ``stage1_synthetic_source`` (whichever stage-1 input this run's own *initial* invocation
+    used) are recorded in the ``RunRecord.artifact_reference`` JSON so a later module-
+    simulation request can resolve the identical input without the caller re-supplying it --
+    when neither is passed here (the resume path, which has no fresh stage-1 input of its own),
+    the run's own already-recorded values are carried forward unchanged instead of being lost.
     """
+    existing_run_record = get_run_record(session, run_record_id)
+    assert existing_run_record is not None  # the caller's own contract guarantee
+    stage1_inputs = {
+        "agent1_organism_id": agent1_organism_id,
+        "stage1_synthetic_source": stage1_synthetic_source,
+    }
+    if (
+        agent1_organism_id is None
+        and stage1_synthetic_source is None
+        and existing_run_record.artifact_reference
+    ):
+        try:
+            previous = json.loads(existing_run_record.artifact_reference)
+        except (json.JSONDecodeError, TypeError):
+            previous = {}
+        stage1_inputs = {
+            "agent1_organism_id": previous.get("agent1_organism_id"),
+            "stage1_synthetic_source": previous.get("stage1_synthetic_source"),
+        }
+
     artifact_payload = json.dumps(
         {
             "root_model_id": result.root_model_id,
@@ -169,6 +209,7 @@ def persist_result_and_transition(
             "requires_user_review": result.requires_user_review,
             "pending_review_modules": [dict(m) for m in result.pending_review_modules],
             "recursion_policy_version": result.recursion_policy_version,
+            **stage1_inputs,
         }
     )
     warnings_payload = json.dumps(list(result.warnings)) if result.warnings else None
@@ -179,6 +220,7 @@ def persist_result_and_transition(
             nodes=[node_summary_to_dict(n) for n in result.nodes],
             session=session,
         )
+        materialize_accepted_modules(run_record_id=run_record_id, session=session)
 
         if result.requires_user_review:
             assert result.checkpoint is not None  # the harness's own contract guarantee

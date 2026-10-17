@@ -69,6 +69,14 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
   during the (possibly multi-minute) subprocess call always leaves the checkpoint reusable and
   the attempt safely retryable, never a permanently stuck run. No Harness or Agent2/3/4/5
   changes. See `docs/06_crash_safe_resume.md`.
+* **Executable-Module Materialization** (`ModelModule`, `app/orchestration/model_module
+  _orchestrator.py`): turns accepted hierarchy modules into durable, idempotently-
+  materialized execution targets with full provenance (root model, parent module, hierarchy
+  run/node), distinct from an ordinary top-level `Model`. `request_module_simulation` reuses
+  the harness's own new module-simulation canonical entrypoint to run a real Agent 3
+  simulation against the *module's* own standalone artifact -- never the root model's, and
+  never duplicating Agent 2/Agent 3 logic here. See
+  `docs/07_executable_module_materialization.md`.
 
 ## Explicitly out of scope (owned elsewhere)
 
