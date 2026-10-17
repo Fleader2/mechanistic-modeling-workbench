@@ -8,6 +8,7 @@ enforcement or orchestration logic lives in the Workbench).
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -148,11 +149,44 @@ def get_run_record(session: Session, run_record_id: UUID) -> RunRecord | None:
     return session.get(RunRecord, run_record_id)
 
 
+def resolve_stage1_inputs(run_record: RunRecord) -> tuple[str | None, str | None]:
+    """The hierarchy run's own original stage-1 input (``agent1_organism_id``,
+    ``stage1_synthetic_source``), recorded in its own ``artifact_reference`` JSON by
+    ``app.orchestration.hierarchical_run_orchestrator.persist_result_and_transition``.
+
+    Shared by every module-scoped operation that needs to re-invoke the harness against the
+    same root model a hierarchy run was originally searched against
+    (``app.orchestration.model_module_orchestrator``/``module_boundary_orchestrator``) --
+    never duplicated between them. Raises ``ValueError`` if neither was ever recorded (a
+    run_record predating this increment, or one whose own artifact_reference was never
+    written)."""
+    if not run_record.artifact_reference:
+        raise ValueError(
+            f"RunRecord {run_record.id} has no recorded stage-1 input to reuse for a "
+            "module-scoped operation"
+        )
+    try:
+        data = json.loads(run_record.artifact_reference)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ValueError(
+            f"RunRecord {run_record.id}'s own artifact_reference could not be parsed: {exc!r}"
+        ) from exc
+    organism_id = data.get("agent1_organism_id")
+    synthetic_source = data.get("stage1_synthetic_source")
+    if organism_id is None and synthetic_source is None:
+        raise ValueError(
+            f"RunRecord {run_record.id} has no recorded stage-1 input to reuse for a "
+            "module-scoped operation"
+        )
+    return organism_id, synthetic_source
+
+
 __all__ = [
     "complete_run",
     "create_run_record",
     "get_run_record",
     "pause_run_for_review",
+    "resolve_stage1_inputs",
     "resume_run",
     "start_run",
 ]

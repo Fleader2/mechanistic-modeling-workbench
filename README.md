@@ -77,6 +77,15 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
   simulation against the *module's* own standalone artifact -- never the root model's, and
   never duplicating Agent 2/Agent 3 logic here. See
   `docs/07_executable_module_materialization.md`.
+* **Boundary-Condition Semantics** (`ModuleBoundaryPort`, `app/orchestration/module_boundary
+  _orchestrator.py`): makes a hierarchy module scientifically executable by deriving candidate
+  boundary species from Agent 2's own reaction topology (structural facts only, never a
+  fabricated treatment), persisting human (or future Agent4/5) treatment decisions with full
+  provenance, and computing `ModelModule.execution_status`
+  (`VIEW_ONLY`/`REQUIRES_BOUNDARY_REVIEW`/`SIMULATION_READY`). `request_module_simulation` now
+  refuses a non-`SIMULATION_READY` module before ever invoking the harness, and merges the
+  module's own resolved boundary ports into the materialization request. See
+  `docs/08_boundary_condition_semantics.md`.
 
 ## Explicitly out of scope (owned elsewhere)
 

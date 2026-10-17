@@ -20,15 +20,21 @@ logic does not need a real Agent 3 run to be exercised correctly either way.
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 
 import pytest
 
 from app.contracts.module_simulation import CONTRACT_VERSION, ModuleSimulationResult
-from app.models.enums import RunStage, RunStatus
+from app.models.enums import ModuleBoundaryTreatmentType, RunStage, RunStatus
 from app.orchestration import hierarchical_run_orchestrator, model_module_orchestrator
 from app.orchestration.hierarchical_harness_client import HARNESS_REPO_DIR, harness_is_available
+from app.orchestration.module_boundary_orchestrator import (
+    evaluate_module_execution_status,
+    submit_boundary_decision,
+)
 from app.persistence.hierarchy_node import create_hierarchy_nodes
 from app.persistence.model_module import materialize_accepted_modules
+from app.persistence.module_boundary_port import persist_candidate_boundary_ports
 from app.persistence.run_record import complete_run, create_run_record, start_run
 from tests.persistence.conftest import make_project_id, make_subproject_id
 
@@ -114,6 +120,24 @@ def _make_run_with_module(db_session, *, project_id, subproject_id):
     return run, module
 
 
+def _resolve_to_simulation_ready(db_session, module) -> None:
+    """Persist one boundary port for ``module`` and resolve it to ``EXTERNALLY_CONTROLLED`` --
+    the minimum needed to reach ``SIMULATION_READY`` without a real harness call, for tests
+    that only exercise ``request_module_simulation``'s own gate/payload-merge logic."""
+    (port,) = persist_candidate_boundary_ports(
+        model_module_id=module.id,
+        candidates=[{"species_id": "compound-S1::in::compartment-1", "direction": "INPUT"}],
+        session=db_session,
+    )
+    submit_boundary_decision(
+        port_id=port.id,
+        treatment_type=ModuleBoundaryTreatmentType.EXTERNALLY_CONTROLLED,
+        session=db_session,
+        initial_value=Decimal("1"),
+        decided_by="test-user",
+    )
+
+
 def _succeeding_result(request) -> tuple[ModuleSimulationResult, None]:
     return (
         ModuleSimulationResult(
@@ -178,6 +202,7 @@ def test_request_module_simulation_invokes_with_correct_module_and_links_result(
     _run, module = _make_run_with_module(
         db_session, project_id=project_id, subproject_id=subproject_id
     )
+    _resolve_to_simulation_ready(db_session, module)
 
     captured = {}
 
@@ -195,11 +220,22 @@ def test_request_module_simulation_invokes_with_correct_module_and_links_result(
     )
 
     assert captured["request"].module_id == "modA"
-    assert captured["request"].attach_payload == {
-        "modularization_id": "cand-root",
-        "module_ids": ["modA"],
-        "memberships": [{"module_id": "modA", "component_type": "REACTION", "component_id": "r1"}],
-    }
+    assert captured["request"].attach_payload["modularization_id"] == "cand-root"
+    assert captured["request"].attach_payload["module_ids"] == ["modA"]
+    assert captured["request"].attach_payload["memberships"] == [
+        {"module_id": "modA", "component_type": "REACTION", "component_id": "r1"}
+    ]
+    assert captured["request"].attach_payload["module_ports"] == [
+        {
+            "port_id": f"port::{module.id}::compound-S1::in::compartment-1::INPUT",
+            "module_id": "modA",
+            "species_id": "compound-S1::in::compartment-1",
+            "direction": "INPUT",
+            "externally_controlled": True,
+            "initial_value": "1",
+            "unit": None,
+        }
+    ]
     assert captured["request"].input_artifact_references == {
         "stage1_synthetic_source": "/tmp/fake_agent1_view.json"
     }
@@ -219,6 +255,7 @@ def test_request_module_simulation_is_idempotently_replayed(db_session, monkeypa
     _run, module = _make_run_with_module(
         db_session, project_id=project_id, subproject_id=subproject_id
     )
+    _resolve_to_simulation_ready(db_session, module)
 
     call_count = {"n": 0}
 
@@ -255,6 +292,7 @@ def test_request_module_simulation_reports_client_error_as_failed(db_session, mo
     _run, module = _make_run_with_module(
         db_session, project_id=project_id, subproject_id=subproject_id
     )
+    _resolve_to_simulation_ready(db_session, module)
 
     from app.orchestration.module_simulation_harness_client import (
         ModuleSimulationHarnessClientError,
@@ -278,12 +316,15 @@ def test_request_module_simulation_reports_client_error_as_failed(db_session, mo
 
 
 def test_request_module_simulation_reports_invalid_module_as_failed(db_session, monkeypatch):
-    """A module with no eligible standalone artifact -- the harness's own disclosed
-    MODULE_SIMULATION_FAILED outcome -- is rejected clearly, never silently accepted."""
+    """Even a module already ``SIMULATION_READY`` on the Workbench's own side can still have
+    its harness call itself come back ``MODULE_SIMULATION_FAILED`` (e.g. a real Agent 2
+    materialization error unrelated to boundary treatment) -- rejected clearly, never silently
+    accepted."""
     project_id, subproject_id = _make_ids(db_session)
     _run, module = _make_run_with_module(
         db_session, project_id=project_id, subproject_id=subproject_id
     )
+    _resolve_to_simulation_ready(db_session, module)
 
     from app.contracts.module_simulation import ModuleSimulationError
 
@@ -334,6 +375,47 @@ def test_request_module_simulation_raises_for_unknown_module(db_session):
         )
 
 
+def test_request_module_simulation_raises_for_a_view_only_module(db_session):
+    """Boundary-Condition Semantics increment: a freshly-materialized module has no boundary
+    ports yet, so it is ``VIEW_ONLY`` -- ``request_module_simulation`` must reject it before
+    ever invoking the harness, never attempt a materialization Agent 2 would have rejected
+    anyway."""
+    project_id, subproject_id = _make_ids(db_session)
+    _run, module = _make_run_with_module(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    with pytest.raises(ValueError, match="VIEW_ONLY"):
+        model_module_orchestrator.request_module_simulation(
+            model_module_id=module.id,
+            subproject_id=subproject_id,
+            project_id=project_id,
+            session=db_session,
+        )
+
+
+def test_request_module_simulation_raises_for_a_requires_review_module(db_session):
+    """A module with a derived-but-unresolved boundary port is ``REQUIRES_BOUNDARY_REVIEW`` --
+    still rejected before the harness is ever invoked."""
+    project_id, subproject_id = _make_ids(db_session)
+    _run, module = _make_run_with_module(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    persist_candidate_boundary_ports(
+        model_module_id=module.id,
+        candidates=[{"species_id": "compound-S1::in::compartment-1", "direction": "INPUT"}],
+        session=db_session,
+    )
+    evaluate_module_execution_status(module, db_session)
+
+    with pytest.raises(ValueError, match="REQUIRES_BOUNDARY_REVIEW"):
+        model_module_orchestrator.request_module_simulation(
+            model_module_id=module.id,
+            subproject_id=subproject_id,
+            project_id=project_id,
+            session=db_session,
+        )
+
+
 def test_request_module_simulation_raises_when_no_stage1_input_was_recorded(db_session):
     project_id, subproject_id = _make_ids(db_session)
     run = create_run_record(subproject_id=subproject_id, stage=RunStage.HARNESS, session=db_session)
@@ -345,6 +427,7 @@ def test_request_module_simulation_raises_when_no_stage1_input_was_recorded(db_s
     complete_run(
         run_record_id=run.id, status=RunStatus.SUCCEEDED, session=db_session
     )  # no artifact_reference
+    _resolve_to_simulation_ready(db_session, module)
 
     with pytest.raises(ValueError, match="no recorded stage-1 input"):
         model_module_orchestrator.request_module_simulation(
@@ -363,6 +446,7 @@ def test_fresh_session_reload_before_requesting_simulation(db_session, monkeypat
     _run, module = _make_run_with_module(
         db_session, project_id=project_id, subproject_id=subproject_id
     )
+    _resolve_to_simulation_ready(db_session, module)
     module_id = module.id
 
     db_session.expire_all()
@@ -398,11 +482,16 @@ def test_run_record_stage_agent3_without_model_module_id_is_still_a_plain_full_p
 @pytest.mark.skipif(_HARNESS_UNAVAILABLE is not None, reason=str(_HARNESS_UNAVAILABLE))
 def test_real_end_to_end_module_simulation_targets_the_module_not_the_root(db_session):
     """Workbench accepted hierarchy module -> persisted module identity -> Harness -> real
-    Agent 2 subprocess. Boundary treatment is never fabricated by this increment, so a module
-    reached purely through the real search's own attach_payload honestly comes back
-    MODULE_SIMULATION_FAILED (readiness=VIEW_ONLY) -- this test confirms the *real* subprocess
-    chain reaches exactly that disclosed outcome, with provenance correctly linked to the
-    specific module (never the root)."""
+    Agent 2 subprocess. Boundary treatment is never fabricated, so a module reached purely
+    through the real search's own attach_payload (no boundary ports derived/resolved yet) stays
+    honestly ``VIEW_ONLY``. Since the Boundary-Condition Semantics increment,
+    ``request_module_simulation`` itself now rejects a non-``SIMULATION_READY`` module before
+    ever invoking the harness -- this test confirms that *pre-flight* rejection fires correctly
+    for a real hierarchy module, with no subprocess invoked at all (a strictly stronger
+    guarantee than the harness's own prior disclosed MODULE_SIMULATION_FAILED outcome, and the
+    reason this test no longer needs the harness to actually run to pass -- the ``skipif`` is
+    kept only because the module itself is produced via a real hierarchical-recursion
+    subprocess)."""
     project_id, subproject_id = _make_ids(db_session)
 
     run = hierarchical_run_orchestrator.submit_hierarchical_run(
@@ -454,14 +543,12 @@ def test_real_end_to_end_module_simulation_targets_the_module_not_the_root(db_se
     modules = model_module_orchestrator.list_model_modules(db_session, run.id)
     assert len(modules) >= 1
     target_module = modules[0]
+    assert target_module.execution_status.value == "VIEW_ONLY"
 
-    sim_run = model_module_orchestrator.request_module_simulation(
-        model_module_id=target_module.id,
-        subproject_id=subproject_id,
-        project_id=project_id,
-        session=db_session,
-    )
-    assert sim_run.status is RunStatus.FAILED
-    assert sim_run.model_module_id == target_module.id
-    assert target_module.module_id in sim_run.error_summary
-    assert "VIEW_ONLY" in sim_run.error_summary
+    with pytest.raises(ValueError, match="VIEW_ONLY"):
+        model_module_orchestrator.request_module_simulation(
+            model_module_id=target_module.id,
+            subproject_id=subproject_id,
+            project_id=project_id,
+            session=db_session,
+        )

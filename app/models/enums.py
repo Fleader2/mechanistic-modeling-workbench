@@ -190,6 +190,82 @@ class HierarchyResumeAttemptStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class ModulePortDirection(StrEnum):
+    """A module boundary port's own signal direction (Boundary-Condition Semantics increment).
+
+    The Workbench's own copy of the identical vocabulary
+    ``agent2-antimony-builder/app/agent2/types.ModulePortDirection`` already defines -- never
+    imported across repositories, see this module's own docstring. Reused verbatim (not
+    reinvented) because it is exactly the direction value the harness's own module-simulation
+    entrypoint already expects in an ``attach_payload["module_ports"]`` entry.
+    """
+
+    INPUT = "INPUT"
+    OUTPUT = "OUTPUT"
+    INPUT_OUTPUT = "INPUT_OUTPUT"
+
+
+class ModuleBoundaryTreatmentType(StrEnum):
+    """How one boundary port of a ``ModelModule`` is scientifically treated (Boundary-Condition
+    Semantics increment).
+
+    ``UNRESOLVED`` is the only value automatic derivation is ever allowed to assign (task
+    instructions §5: never fabricate a scientific assumption) -- every other value requires an
+    explicit human (or, in a future increment, Agent4/5) decision, recorded as its own
+    ``ModuleBoundaryPort.decided_at``/``decided_by``.
+
+    ``EXTERNALLY_CONTROLLED``/``PRESCRIBED_INPUT`` both map to Agent 2's own
+    ``ModulePort.externally_controlled=True`` when passed to the harness's module-simulation
+    entrypoint (the one mechanism Agent 2 itself has for a standalone-executable boundary) --
+    distinguished here only for the Workbench's own, richer scientific bookkeeping, never a
+    distinction Agent 2 itself needs to make. ``DYNAMIC_COUPLING`` is a genuine, resolved
+    scientific determination (the boundary species truly depends on something outside the
+    module, e.g. its own parent) that Agent 2 still has no standalone mechanism to represent --
+    a module with any such port never reaches ``SIMULATION_READY`` (task instructions: "remains
+    non-standalone if appropriate"), even though the port itself is not ambiguous.
+    """
+
+    EXTERNALLY_CONTROLLED = "EXTERNALLY_CONTROLLED"
+    PRESCRIBED_INPUT = "PRESCRIBED_INPUT"
+    DYNAMIC_COUPLING = "DYNAMIC_COUPLING"
+    UNRESOLVED = "UNRESOLVED"
+
+
+class ModuleBoundaryResolutionStatus(StrEnum):
+    """Whether one ``ModuleBoundaryPort`` still needs human review.
+
+    Deliberately its own column (not merely inferred ad hoc from ``treatment_type`` at read
+    time) so a UI/query can filter "everything still pending review" directly -- kept
+    consistent with ``treatment_type`` by the persistence layer alone
+    (``app.persistence.module_boundary_port``), never by a database constraint:
+    ``PENDING_REVIEW`` if and only if ``treatment_type is UNRESOLVED``.
+    """
+
+    PENDING_REVIEW = "PENDING_REVIEW"
+    RESOLVED = "RESOLVED"
+
+
+class ModelModuleExecutionStatus(StrEnum):
+    """One ``ModelModule``'s own readiness to be handed to Agent 3 (Boundary-Condition
+    Semantics increment).
+
+    ``VIEW_ONLY`` -- the Workbench's own copy of Agent 2's identical vocabulary
+    (``AntimonyArtifactReadiness.VIEW_ONLY``): no boundary ports have been derived/declared yet
+    (the module's own initial state, before ``derive_boundary_ports`` is ever called -- the
+    identical state a module reached purely through the hierarchy search's own output would
+    stay in forever without this increment's own review workflow).
+    ``REQUIRES_BOUNDARY_REVIEW`` -- at least one boundary port exists but is not yet resolved
+    to a standalone-capable treatment (``UNRESOLVED`` or the genuinely-resolved-but-non-
+    standalone ``DYNAMIC_COUPLING``).
+    ``SIMULATION_READY`` -- every boundary port is resolved to ``EXTERNALLY_CONTROLLED`` or
+    ``PRESCRIBED_INPUT`` -- Agent 3 may be invoked.
+    """
+
+    VIEW_ONLY = "VIEW_ONLY"
+    REQUIRES_BOUNDARY_REVIEW = "REQUIRES_BOUNDARY_REVIEW"
+    SIMULATION_READY = "SIMULATION_READY"
+
+
 __all__ = [
     "ConfidenceClass",
     "HierarchyResumeAttemptStatus",
@@ -198,10 +274,14 @@ __all__ = [
     "ModelBuildRequestPathwayRole",
     "ModelBuildRequestReactionRole",
     "ModelBuildRequestSpeciesRole",
+    "ModelModuleExecutionStatus",
     "ModelSourceType",
     "ModelStatus",
     "ModelingDecisionResolutionSource",
     "ModelingDecisionStatus",
+    "ModuleBoundaryResolutionStatus",
+    "ModuleBoundaryTreatmentType",
+    "ModulePortDirection",
     "ProjectType",
     "RunStage",
     "RunStatus",

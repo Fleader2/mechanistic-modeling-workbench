@@ -17,14 +17,19 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.enums import ModelModuleExecutionStatus
 from app.models.hierarchy_node import HierarchyNode
 from app.models.model import Model
 from app.models.run_record import RunRecord
+
+_MODEL_MODULE_EXECUTION_STATUS = Enum(
+    ModelModuleExecutionStatus, name="model_module_execution_status", create_type=False
+)
 
 
 class ModelModule(Base):
@@ -81,6 +86,19 @@ class ModelModule(Base):
     #: ``HierarchyNode.attach_payload`` (never ``NULL``: a node with no attach_payload never
     #: becomes a ``ModelModule`` at all).
     attach_payload: Mapped[str] = mapped_column(Text, nullable=False)
+
+    #: Boundary-Condition Semantics increment: this module's own readiness to be handed to
+    #: Agent 3 -- ``VIEW_ONLY`` until ``derive_boundary_ports`` is ever called, then
+    #: ``REQUIRES_BOUNDARY_REVIEW``/``SIMULATION_READY`` depending on its own
+    #: ``ModuleBoundaryPort`` rows' own treatment resolution (see
+    #: ``app.orchestration.module_boundary_orchestrator.evaluate_module_execution_status``,
+    #: the one place this column is ever recomputed -- never hand-set elsewhere).
+    execution_status: Mapped[ModelModuleExecutionStatus] = mapped_column(
+        _MODEL_MODULE_EXECUTION_STATUS,
+        nullable=False,
+        default=ModelModuleExecutionStatus.VIEW_ONLY,
+        server_default=ModelModuleExecutionStatus.VIEW_ONLY.value,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

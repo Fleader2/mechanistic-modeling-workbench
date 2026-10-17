@@ -19,16 +19,23 @@ from app.contracts.module_simulation import (
     CONTRACT_VERSION,
     ModuleSimulationRequest,
 )
-from app.models.enums import RunStage, RunStatus
+from app.models.enums import ModelModuleExecutionStatus, RunStage, RunStatus
 from app.models.model_module import ModelModule
 from app.models.run_record import RunRecord
+from app.orchestration.module_boundary_orchestrator import build_module_ports_payload
 from app.orchestration.module_simulation_harness_client import invoke_module_simulation
 from app.persistence.model_module import (
     build_attach_payload,
     get_model_module,
     list_model_modules_for_run,
 )
-from app.persistence.run_record import complete_run, create_run_record, get_run_record, start_run
+from app.persistence.run_record import (
+    complete_run,
+    create_run_record,
+    get_run_record,
+    resolve_stage1_inputs,
+    start_run,
+)
 
 
 def list_model_modules(session: Session, run_record_id: UUID) -> list[ModelModule]:
@@ -45,33 +52,6 @@ def get_model_module_with_provenance(session: Session, model_module_id: UUID) ->
     if module is None:
         raise ValueError(f"no ModelModule with id {model_module_id}")
     return module
-
-
-def _resolve_stage1_inputs(run_record: RunRecord) -> tuple[str | None, str | None]:
-    """The hierarchy run's own original stage-1 input, recorded in its own
-    ``artifact_reference`` JSON by ``app.orchestration.hierarchical_run_orchestrator
-    .persist_result_and_transition``. Raises ``ValueError`` if neither was ever recorded (a
-    run_record predating this increment, or one whose own artifact_reference was never
-    written)."""
-    if not run_record.artifact_reference:
-        raise ValueError(
-            f"RunRecord {run_record.id} has no recorded stage-1 input to reuse for module "
-            "simulation"
-        )
-    try:
-        data = json.loads(run_record.artifact_reference)
-    except (json.JSONDecodeError, TypeError) as exc:
-        raise ValueError(
-            f"RunRecord {run_record.id}'s own artifact_reference could not be parsed: {exc!r}"
-        ) from exc
-    organism_id = data.get("agent1_organism_id")
-    synthetic_source = data.get("stage1_synthetic_source")
-    if organism_id is None and synthetic_source is None:
-        raise ValueError(
-            f"RunRecord {run_record.id} has no recorded stage-1 input to reuse for module "
-            "simulation"
-        )
-    return organism_id, synthetic_source
 
 
 def request_module_simulation(
@@ -95,14 +75,30 @@ def request_module_simulation(
 
     Recorded as ``RunStage.AGENT3`` with ``model_module_id`` set -- distinguishing this from an
     ordinary whole-model Agent 3 run inside ``FULL_PIPELINE`` (which never sets that field).
+
+    **Boundary-Condition Semantics increment: gated on execution readiness.** Raises
+    ``ValueError`` unless ``module.execution_status`` is already ``SIMULATION_READY`` (every
+    boundary port resolved to a treatment that lets Agent 2 build a standalone artifact) --
+    ``VIEW_ONLY``/``REQUIRES_BOUNDARY_REVIEW`` modules never reach the harness at all, never a
+    silent attempt that Agent 2 would have rejected anyway. The module's own resolved
+    ``ModuleBoundaryPort`` rows are merged into the ``attach_payload`` sent to the harness as
+    ``module_ports`` (``app.orchestration.module_boundary_orchestrator
+    .build_module_ports_payload``) -- the stored ``ModelModule.attach_payload`` column itself
+    is never mutated; only this request's own copy carries the resolved ports.
     """
     module = get_model_module(session, model_module_id)
     if module is None:
         raise ValueError(f"no ModelModule with id {model_module_id}")
+    if module.execution_status is not ModelModuleExecutionStatus.SIMULATION_READY:
+        raise ValueError(
+            f"ModelModule {model_module_id} is {module.execution_status.value}, not "
+            "SIMULATION_READY -- resolve its boundary ports first "
+            "(app.orchestration.module_boundary_orchestrator)"
+        )
 
     source_run_record = get_run_record(session, module.run_record_id)
     assert source_run_record is not None
-    agent1_organism_id, stage1_synthetic_source = _resolve_stage1_inputs(source_run_record)
+    agent1_organism_id, stage1_synthetic_source = resolve_stage1_inputs(source_run_record)
 
     if run_record_id is not None:
         existing = get_run_record(session, run_record_id)
@@ -127,12 +123,15 @@ def request_module_simulation(
     if stage1_synthetic_source is not None:
         input_artifact_references["stage1_synthetic_source"] = stage1_synthetic_source
 
+    attach_payload = build_attach_payload(module)
+    attach_payload["module_ports"] = build_module_ports_payload(module, session)
+
     request = ModuleSimulationRequest(
         contract_version=CONTRACT_VERSION,
         run_id=str(run_record.id),
         project_id=str(project_id),
         subproject_id=str(subproject_id),
-        attach_payload=build_attach_payload(module),
+        attach_payload=attach_payload,
         module_id=module.module_id,
         agent1_organism_id=agent1_organism_id,
         input_artifact_references=input_artifact_references,

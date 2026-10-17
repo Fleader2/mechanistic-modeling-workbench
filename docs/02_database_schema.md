@@ -160,6 +160,48 @@ SUCCEEDED
 FAILED
 ```
 
+### ModulePortDirection
+Added by the Boundary-Condition Semantics increment (migration `0007_module_boundary_port`) --
+the Workbench's own copy of Agent 2's identical vocabulary, reused verbatim because it is
+exactly the direction value the harness's own module-simulation entrypoint already expects in
+an `attach_payload["module_ports"]` entry.
+```text
+INPUT
+OUTPUT
+INPUT_OUTPUT
+```
+
+### ModuleBoundaryTreatmentType
+`UNRESOLVED` is the only value automatic derivation is ever allowed to assign -- every other
+value requires an explicit human (or future Agent4/5) decision. `EXTERNALLY_CONTROLLED`/
+`PRESCRIBED_INPUT` both map to Agent 2's own `ModulePort.externally_controlled=True`;
+`DYNAMIC_COUPLING` is a genuine, resolved decision that is never standalone-capable. See
+`docs/08_boundary_condition_semantics.md`.
+```text
+EXTERNALLY_CONTROLLED
+PRESCRIBED_INPUT
+DYNAMIC_COUPLING
+UNRESOLVED
+```
+
+### ModuleBoundaryResolutionStatus
+Kept consistent with `treatment_type` by the persistence layer alone, never a database
+constraint: `PENDING_REVIEW` if and only if `treatment_type is UNRESOLVED`.
+```text
+PENDING_REVIEW
+RESOLVED
+```
+
+### ModelModuleExecutionStatus
+One `model_module`'s own readiness to be handed to Agent 3. `VIEW_ONLY` until
+`derive_boundary_ports` is ever called; `SIMULATION_READY` only once every boundary port is
+resolved to a standalone-capable treatment; else `REQUIRES_BOUNDARY_REVIEW`.
+```text
+VIEW_ONLY
+REQUIRES_BOUNDARY_REVIEW
+SIMULATION_READY
+```
+
 ---
 
 # Table: project
@@ -577,6 +619,7 @@ module_id                  TEXT NOT NULL      -- content-addressed
 source_modularization_id   TEXT NOT NULL
 child_submodel_id          TEXT               -- denormalized from the producing hierarchy_node
 attach_payload             TEXT NOT NULL      -- opaque; copied verbatim from hierarchy_node
+execution_status           model_module_execution_status NOT NULL DEFAULT 'VIEW_ONLY'
 created_at                 TIMESTAMP WITH TIME ZONE NOT NULL
 ```
 
@@ -590,6 +633,48 @@ independent existence apart from its parent" precedent. `hierarchy_node_id` is i
 (every resume/replay) always resolve against. `parent_model_module_id` is `NULL` when this
 module's own parent is the root model itself (the root is never represented as its own
 `model_module` row). See `docs/07_executable_module_materialization.md`.
+
+`execution_status` was added by the Boundary-Condition Semantics increment (migration
+`0007_module_boundary_port`) -- recomputed from this module's own `module_boundary_port` rows
+by `app.orchestration.module_boundary_orchestrator.evaluate_module_execution_status` alone,
+never hand-set elsewhere. See `docs/08_boundary_condition_semantics.md`.
+
+---
+
+# Table: module_boundary_port
+
+```text
+id                         UUID PRIMARY KEY
+model_module_id            UUID NOT NULL REFERENCES model_module(id) ON DELETE CASCADE
+port_id                    TEXT NOT NULL      -- stable, deterministic; never Agent 2-generated
+species_id                 TEXT NOT NULL
+direction                  module_port_direction NOT NULL
+treatment_type             module_boundary_treatment_type NOT NULL DEFAULT 'UNRESOLVED'
+resolution_status          module_boundary_resolution_status NOT NULL DEFAULT 'PENDING_REVIEW'
+initial_value              NUMERIC
+unit                       VARCHAR
+value_source               VARCHAR
+provenance_notes           TEXT
+derived_automatically      BOOLEAN NOT NULL DEFAULT TRUE
+decided_by                 VARCHAR
+decided_at                 TIMESTAMP WITH TIME ZONE
+created_at                 TIMESTAMP WITH TIME ZONE NOT NULL
+updated_at                 TIMESTAMP WITH TIME ZONE NOT NULL
+
+UNIQUE (model_module_id, species_id, direction)
+```
+
+Added by the Boundary-Condition Semantics increment (migration `0007_module_boundary_port`):
+one row per `(model_module, species_id, direction)` candidate or decided boundary port.
+`ON DELETE CASCADE` from `model_module` -- unlike `model_module` itself, this row has no
+independent meaning apart from the module it describes (the identical "no independent
+existence apart from its parent" precedent `hierarchy_pending_review_item` already uses from
+`hierarchy_checkpoint`). `port_id` is a stable, deterministic id computed before any Agent 2
+call is ever made -- never Agent 2's own runtime-generated port id. The unique constraint is
+this table's own idempotency key: `app.persistence.module_boundary_port
+.persist_candidate_boundary_ports` queries it first and creates only genuinely new rows, never
+touching (let alone overwriting) an already-known candidate, automatic or manually-decided.
+See `docs/08_boundary_condition_semantics.md`.
 
 ---
 
@@ -628,6 +713,8 @@ project
    |                       +-- model_module (parent_model_module_id, self-referential lineage)
    |                       |
    |                       +-- run_record (model_module_id, an Agent 3 simulation of it)
+   |                       |
+   |                       +-- module_boundary_port (ON DELETE CASCADE)
    |
    +-- dataset_reference (subproject_id optional)
 
@@ -669,6 +756,7 @@ hierarchy_pending_review_item.hierarchy_checkpoint_id
 hierarchy_resume_attempt.hierarchy_checkpoint_id
 model_module.run_record_id
 run_record.model_module_id
+module_boundary_port.model_module_id
 ```
 
 ---
@@ -697,6 +785,7 @@ hierarchy_checkpoint                           (cascades from run_record)
 hierarchy_pending_review_item                  (cascades from hierarchy_checkpoint)
 hierarchy_review_decision                      (cascades from hierarchy_pending_review_item)
 hierarchy_resume_attempt                       (cascades from hierarchy_checkpoint)
+module_boundary_port                           (cascades from model_module)
 ```
 
 `model.parent_model_id` restricts (a prior model version must not be
@@ -711,3 +800,7 @@ deliberately the odd one out among the Hierarchical Review/Resume increment's ow
 additions: a `ModelModule` is a durable, independently-referenceable execution target (the
 identical "has its own lineage" precedent `model` already uses), never ephemeral workflow
 bookkeeping.
+
+`module_boundary_port` cascades from `model_module` -- unlike `model_module` itself, a boundary
+port row has no independent meaning apart from the module it describes (Boundary-Condition
+Semantics increment).
