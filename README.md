@@ -112,6 +112,14 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
   alters a validation run based on that calibration. An explicit `pin_to_calibration_snapshot
   =False` escape hatch still validates against current conditions when genuinely wanted. See
   `docs/11_module_validation_boundary_pinning.md`.
+* **Hierarchical Aggregation of Module-Level Agent3/4/5 Results**
+  (`app/orchestration/module_aggregation_orchestrator.py`): rolls up module-level simulation/
+  calibration/validation results into durable, immutable, versioned parent/root summaries --
+  recursively, using only the persisted hierarchy topology, never invoking any agent. Tracked
+  separately per execution kind, never blended into one score; a root/parent summary never
+  averages incompatible children's own parameters, always listing them side by side tagged by
+  `module_id`. Idempotent by content fingerprint; a new/changed contributing result creates a
+  new version, the old one is never mutated. See `docs/12_hierarchical_aggregation.md`.
 
 ## Explicitly out of scope (owned elsewhere)
 

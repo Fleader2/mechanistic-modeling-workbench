@@ -217,6 +217,19 @@ CALIBRATION
 VALIDATION
 ```
 
+### ModuleAggregateCompleteness
+Added by the Hierarchical Aggregation of Module-Level Agent3/4/5 Results increment (migration
+`0010_module_aggregate`) -- a pure coverage statement about one `module_aggregate` row's own
+roll-up, never a quality/agreement judgment and never a blended score across heterogeneous
+children. `COMPLETE` only when every "slot" (the target's own direct attempt, if any, plus
+every direct child) succeeded/is itself `COMPLETE`; `EMPTY` only when none did; `PARTIAL`
+otherwise. See `docs/12_hierarchical_aggregation.md`.
+```text
+COMPLETE
+PARTIAL
+EMPTY
+```
+
 ---
 
 # Table: project
@@ -733,6 +746,45 @@ estimates, copied by value, never a live reference), and `{"module_handoff_summa
 
 ---
 
+# Table: module_aggregate
+
+```text
+id                         UUID PRIMARY KEY
+hierarchy_run_record_id    UUID NOT NULL REFERENCES run_record(id) ON DELETE RESTRICT
+target_model_module_id     UUID REFERENCES model_module(id) ON DELETE RESTRICT  -- NULL = root
+execution_kind             module_execution_kind NOT NULL
+version                    INTEGER NOT NULL
+completeness_status        module_aggregate_completeness NOT NULL
+input_fingerprint          VARCHAR NOT NULL
+summary_payload            TEXT NOT NULL  -- opaque; see below
+created_at                 TIMESTAMP WITH TIME ZONE NOT NULL
+```
+
+Added by the Hierarchical Aggregation of Module-Level Agent3/4/5 Results increment (migration
+`0010_module_aggregate`): one immutable row per `(target, execution_kind, version)`, where
+"target" is either a specific `model_module` or the hierarchy root itself
+(`target_model_module_id IS NULL`, rolling up every depth-1 `model_module` of
+`hierarchy_run_record_id` -- the root is never itself a `model_module` row, the identical
+convention `model_module.parent_model_module_id` already uses). `ON DELETE RESTRICT` from
+both `run_record` and `model_module`, the identical "has its own lineage, never ephemeral
+workflow bookkeeping" precedent `model_module`/`module_execution_snapshot` already use. There
+is no `updated_at` column, and no persistence function anywhere in this repository ever
+issues an `UPDATE` against this table -- a new, separately-numbered `version` row is always
+created instead of mutating an existing one.
+
+`input_fingerprint` is a `sha256` hex digest (`app.persistence.module_aggregate
+.compute_aggregate_fingerprint`) of exactly what this aggregate rolled up (its own direct
+result's `run_record` id, if any, plus each direct child's own latest aggregate id+version) --
+this table's own idempotency key: a rebuild whose freshly-computed fingerprint matches the
+latest existing row's own is returned unchanged, never duplicated. `summary_payload` is an
+opaque, pre-serialized JSON object (decoded only by `app.persistence.module_aggregate
+.read_aggregate_payload`, the one documented site) carrying `{"own_result", "children",
+"missing_or_failed_children", "provenance"}` -- never a blended/averaged value across
+children, which are always listed side by side, tagged by their own `module_id`. See
+`docs/12_hierarchical_aggregation.md`.
+
+---
+
 # Relationships
 
 ```text
@@ -764,17 +816,24 @@ project
    |                       +-- hierarchy_resume_attempt (ON DELETE CASCADE)
    |               |
    |               +-- model_module (ON DELETE RESTRICT; 1:1 with a materialized hierarchy_node)
-   |                       |
-   |                       +-- model_module (parent_model_module_id, self-referential lineage)
-   |                       |
-   |                       +-- run_record (model_module_id, an Agent 3 simulation of it, an
-   |                       |               Agent 4 calibration of it, or an Agent 5
-   |                       |               validation of it)
-   |                       |
-   |                       +-- module_boundary_port (ON DELETE CASCADE)
-   |                       |
-   |                       +-- module_execution_snapshot (ON DELETE RESTRICT; 1:1 with the
-   |                                   run_record it snapshots)
+   |               |       |
+   |               |       +-- model_module (parent_model_module_id, self-referential lineage)
+   |               |       |
+   |               |       +-- run_record (model_module_id, an Agent 3 simulation of it, an
+   |               |       |               Agent 4 calibration of it, or an Agent 5
+   |               |       |               validation of it)
+   |               |       |
+   |               |       +-- module_boundary_port (ON DELETE CASCADE)
+   |               |       |
+   |               |       +-- module_execution_snapshot (ON DELETE RESTRICT; 1:1 with the
+   |               |       |           run_record it snapshots)
+   |               |       |
+   |               |       +-- module_aggregate (ON DELETE RESTRICT; target_model_module_id --
+   |               |                   this module's own roll-up, one per execution_kind)
+   |               |
+   |               +-- module_aggregate (ON DELETE RESTRICT; hierarchy_run_record_id with
+   |                           target_model_module_id IS NULL -- the hierarchy root's own
+   |                           roll-up, one per execution_kind)
    |
    +-- dataset_reference (subproject_id optional)
 
@@ -818,6 +877,8 @@ model_module.run_record_id
 run_record.model_module_id
 module_boundary_port.model_module_id
 module_execution_snapshot.model_module_id
+module_aggregate.target_model_module_id
+module_aggregate.hierarchy_run_record_id (composite with execution_kind)
 ```
 
 ---
@@ -870,3 +931,8 @@ Semantics increment).
 provenance record, never ephemeral workflow bookkeeping, deliberately following
 `model_module`'s own precedent rather than `module_boundary_port`'s (Module-Level Agent4
 Calibration with Immutable Execution-Condition Provenance increment).
+
+`module_aggregate` restricts from both `model_module` and `run_record`, the identical
+precedent, for the identical reason (Hierarchical Aggregation of Module-Level Agent3/4/5
+Results increment) -- a historical aggregate must never be silently orphaned or torn down by
+deleting the module or run it describes.

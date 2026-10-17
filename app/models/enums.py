@@ -287,6 +287,29 @@ class ModuleExecutionKind(StrEnum):
     VALIDATION = "VALIDATION"
 
 
+class ModuleAggregateCompleteness(StrEnum):
+    """Whether one ``ModuleAggregate``'s own roll-up is backed by enough evidence to call it
+    done, for one target (a module or the hierarchy root) and one ``ModuleExecutionKind``
+    (Hierarchical Aggregation of Module-Level Agent3/4/5 Results increment).
+
+    Deliberately three values, never a blended score: this increment never averages or
+    otherwise merges child modules' own heterogeneous results (task instructions §4), so
+    completeness is a statement about *coverage*, not about scientific quality or agreement.
+
+    ``COMPLETE`` -- the target's own direct result (if attempted) succeeded, and every direct
+    child (if any) is itself ``COMPLETE`` for this execution kind.
+    ``PARTIAL`` -- at least one, but not all, of {the target's own direct attempt, its direct
+    children} succeeded/is ``COMPLETE`` -- some real evidence exists, but the picture is not
+    whole.
+    ``EMPTY`` -- no successful evidence anywhere in this target's own subtree for this
+    execution kind (nothing attempted, or everything attempted failed).
+    """
+
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    EMPTY = "EMPTY"
+
+
 __all__ = [
     "ConfidenceClass",
     "HierarchyResumeAttemptStatus",
@@ -300,6 +323,7 @@ __all__ = [
     "ModelStatus",
     "ModelingDecisionResolutionSource",
     "ModelingDecisionStatus",
+    "ModuleAggregateCompleteness",
     "ModuleBoundaryResolutionStatus",
     "ModuleBoundaryTreatmentType",
     "ModuleExecutionKind",

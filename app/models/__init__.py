@@ -34,6 +34,7 @@ from app.models.model_build_request import (
 )
 from app.models.model_module import ModelModule
 from app.models.modeling_decision import ModelingDecision, ModelingDecisionOption
+from app.models.module_aggregate import ModuleAggregate
 from app.models.module_boundary_port import ModuleBoundaryPort
 from app.models.module_execution_snapshot import ModuleExecutionSnapshot
 from app.models.project import Project
@@ -61,6 +62,7 @@ __all__ = [
     "ModelModule",
     "ModelingDecision",
     "ModelingDecisionOption",
+    "ModuleAggregate",
     "ModuleBoundaryPort",
     "ModuleExecutionSnapshot",
     "Project",
