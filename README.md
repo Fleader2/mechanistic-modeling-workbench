@@ -86,6 +86,16 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
   refuses a non-`SIMULATION_READY` module before ever invoking the harness, and merges the
   module's own resolved boundary ports into the materialization request. See
   `docs/08_boundary_condition_semantics.md`.
+* **Module-Level Agent4 Calibration with Immutable Execution-Condition Provenance**
+  (`ModuleExecutionSnapshot`, `app/orchestration/module_calibration_orchestrator.py`): lets a
+  `SIMULATION_READY` module undergo real Agent 4 calibration against Workbench-supplied
+  experimental data. Every calibration target/observation is validated against the module's
+  own known membership before any harness call (never fabricated); an immutable snapshot of
+  the exact resolved boundary ports, calibration configuration, and referenced datasets is
+  captured for every attempt, before the harness is invoked, so a later change to any of those
+  never alters a historical record. Repeated calibration with different data/boundary
+  assumptions never overwrites an earlier result. See
+  `docs/09_module_level_agent4_calibration.md`.
 
 ## Explicitly out of scope (owned elsewhere)
 

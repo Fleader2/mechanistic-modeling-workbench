@@ -202,6 +202,18 @@ REQUIRES_BOUNDARY_REVIEW
 SIMULATION_READY
 ```
 
+### ModuleExecutionKind
+Added by the Module-Level Agent4 Calibration with Immutable Execution-Condition Provenance
+increment (migration `0008_module_execution_snapshot`) -- which downstream agent one
+`module_execution_snapshot` row's own execution was for. Denormalized from the owning
+`run_record.stage` (`AGENT3`/`AGENT4`) at creation time. Only `CALIBRATION` is wired up by
+this increment; `SIMULATION` is schema-ready for a later increment to adopt without a
+migration. See `docs/09_module_level_agent4_calibration.md`.
+```text
+SIMULATION
+CALIBRATION
+```
+
 ---
 
 # Table: project
@@ -678,6 +690,41 @@ See `docs/08_boundary_condition_semantics.md`.
 
 ---
 
+# Table: module_execution_snapshot
+
+```text
+id                         UUID PRIMARY KEY
+model_module_id            UUID NOT NULL REFERENCES model_module(id) ON DELETE RESTRICT
+run_record_id              UUID NOT NULL UNIQUE REFERENCES run_record(id) ON DELETE RESTRICT
+execution_kind             module_execution_kind NOT NULL
+module_artifact_hash       VARCHAR NOT NULL  -- sha256 of the Agent 2 materialization input
+snapshot_payload           TEXT NOT NULL     -- opaque; see below
+created_at                 TIMESTAMP WITH TIME ZONE NOT NULL
+```
+
+Added by the Module-Level Agent4 Calibration with Immutable Execution-Condition Provenance
+increment (migration `0008_module_execution_snapshot`): one immutable row per module-scoped
+execution (`run_record_id` unique, 1:1). `ON DELETE RESTRICT` from both `model_module` and
+`run_record` -- a durable, independently-meaningful provenance record, the identical "has its
+own lineage" precedent `model_module` itself already uses, never the "no independent
+existence apart from its parent" precedent `module_boundary_port`'s own `CASCADE` uses. There
+is no `updated_at` column, and no persistence function anywhere in this repository ever issues
+an `UPDATE` against this table -- a later change to a `module_boundary_port`'s own decision or
+a `dataset_reference`'s own catalog row never alters a snapshot already on file.
+
+`module_artifact_hash` is a `sha256` hex digest of the canonical JSON encoding of the exact
+Agent 2 materialization input (`attach_payload` plus its own merged `module_ports`) --
+deterministic and always computable before any harness subprocess is invoked, so a snapshot
+exists even for a run that later fails. `snapshot_payload` is an opaque, pre-serialized JSON
+object (decoded only by `app.persistence.module_execution_snapshot.read_snapshot_payload`, the
+one documented site, mirroring `model_module.attach_payload`'s own established discipline)
+carrying `{"boundary_ports", "contract_versions"}` always, `{"calibration_config",
+"dataset_references"}` only for `execution_kind=CALIBRATION`, and `{"module_handoff_summary",
+"parameters", "species"}` only once the underlying harness call actually completed. See
+`docs/09_module_level_agent4_calibration.md`.
+
+---
+
 # Relationships
 
 ```text
@@ -712,9 +759,13 @@ project
    |                       |
    |                       +-- model_module (parent_model_module_id, self-referential lineage)
    |                       |
-   |                       +-- run_record (model_module_id, an Agent 3 simulation of it)
+   |                       +-- run_record (model_module_id, an Agent 3 simulation of it, or
+   |                       |               an Agent 4 calibration of it)
    |                       |
    |                       +-- module_boundary_port (ON DELETE CASCADE)
+   |                       |
+   |                       +-- module_execution_snapshot (ON DELETE RESTRICT; 1:1 with the
+   |                                   run_record it snapshots)
    |
    +-- dataset_reference (subproject_id optional)
 
@@ -757,6 +808,7 @@ hierarchy_resume_attempt.hierarchy_checkpoint_id
 model_module.run_record_id
 run_record.model_module_id
 module_boundary_port.model_module_id
+module_execution_snapshot.model_module_id
 ```
 
 ---
@@ -804,3 +856,8 @@ bookkeeping.
 `module_boundary_port` cascades from `model_module` -- unlike `model_module` itself, a boundary
 port row has no independent meaning apart from the module it describes (Boundary-Condition
 Semantics increment).
+
+`module_execution_snapshot` restricts from both `model_module` and `run_record` -- a durable
+provenance record, never ephemeral workflow bookkeeping, deliberately following
+`model_module`'s own precedent rather than `module_boundary_port`'s (Module-Level Agent4
+Calibration with Immutable Execution-Condition Provenance increment).

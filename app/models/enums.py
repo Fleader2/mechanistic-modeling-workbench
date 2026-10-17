@@ -266,6 +266,23 @@ class ModelModuleExecutionStatus(StrEnum):
     SIMULATION_READY = "SIMULATION_READY"
 
 
+class ModuleExecutionKind(StrEnum):
+    """Which downstream agent one ``ModuleExecutionSnapshot`` row's own execution was for
+    (Module-Level Agent4 Calibration with Immutable Execution-Condition Provenance increment).
+
+    A denormalized copy of information already implicit in the owning ``RunRecord.stage``
+    (``AGENT3`` vs ``AGENT4``) -- kept as its own column so a snapshot row is self-describing
+    without an eager join, exactly as ``ModelModule.depth``/``module_id`` are themselves
+    denormalized copies of their own producing ``HierarchyNode``'s fields. This table is
+    deliberately generic over both kinds from the start (only ``CALIBRATION`` is wired up by
+    this increment; ``SIMULATION`` support is schema-ready for a later increment to adopt
+    without any migration).
+    """
+
+    SIMULATION = "SIMULATION"
+    CALIBRATION = "CALIBRATION"
+
+
 __all__ = [
     "ConfidenceClass",
     "HierarchyResumeAttemptStatus",
@@ -281,6 +298,7 @@ __all__ = [
     "ModelingDecisionStatus",
     "ModuleBoundaryResolutionStatus",
     "ModuleBoundaryTreatmentType",
+    "ModuleExecutionKind",
     "ModulePortDirection",
     "ProjectType",
     "RunStage",
