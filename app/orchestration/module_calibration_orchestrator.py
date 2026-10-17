@@ -269,6 +269,13 @@ def request_module_calibration(
         "calibration_config": calibration_request,
         "dataset_references": dataset_references_snapshot,
         "contract_versions": {"workbench_module_calibration_contract_version": CONTRACT_VERSION},
+        # Boundary-Condition Pinning increment: the exact Agent 2 materialization input this
+        # run actually used, carried verbatim so a *later* module-validation request can pin
+        # its own materialization to these identical values rather than this module's own
+        # current (and possibly since-revised) boundary state. Never read back and mutated --
+        # only ever copied forward byte-for-byte by a reader.
+        "attach_payload": attach_payload,
+        "module_ports_payload": module_ports_payload,
     }
     if prior_simulation_run_record_id is not None:
         snapshot_payload["prior_simulation_run_record_id"] = str(prior_simulation_run_record_id)

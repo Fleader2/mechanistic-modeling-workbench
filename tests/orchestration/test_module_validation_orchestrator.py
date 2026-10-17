@@ -31,7 +31,10 @@ from app.orchestration.module_validation_orchestrator import ModuleValidationVal
 from app.persistence.dataset_reference import persist_dataset_reference
 from app.persistence.hierarchy_node import create_hierarchy_nodes
 from app.persistence.model_module import materialize_accepted_modules
-from app.persistence.module_boundary_port import persist_candidate_boundary_ports
+from app.persistence.module_boundary_port import (
+    list_boundary_ports_for_module,
+    persist_candidate_boundary_ports,
+)
 from app.persistence.module_execution_snapshot import get_snapshot_for_run, read_snapshot_payload
 from app.persistence.run_record import complete_run, create_run_record, start_run
 from tests.persistence.conftest import make_project_id, make_subproject_id
@@ -148,7 +151,22 @@ _AGENT4_REPORT = {
 }
 
 
-def _make_succeeded_calibration_run(db_session, module, *, project_id, subproject_id):
+def _make_succeeded_calibration_run(
+    db_session, module, *, project_id, subproject_id, boundary_initial_value="1"
+):
+    """A hand-built, already-SUCCEEDED Agent4 ``RunRecord`` standing in for a real
+    ``request_module_calibration`` call -- paired with a real ``ModuleExecutionSnapshot``
+    (``execution_kind=CALIBRATION``) carrying the pinned ``attach_payload``/
+    ``module_ports_payload`` fields that increment now requires, so that
+    ``request_module_validation``'s own default pinned-reconstruction path has real snapshot
+    data to read back, exactly as a genuine calibration run would leave behind."""
+    from app.orchestration.module_boundary_orchestrator import build_module_ports_payload
+    from app.persistence.model_module import build_attach_payload
+    from app.persistence.module_execution_snapshot import (
+        compute_module_artifact_hash,
+        create_snapshot,
+    )
+
     run_record = create_run_record(
         subproject_id=subproject_id,
         stage=RunStage.AGENT4,
@@ -158,6 +176,45 @@ def _make_succeeded_calibration_run(db_session, module, *, project_id, subprojec
     run_record.model_module_id = module.id
     db_session.flush()
     start_run(run_record_id=run_record.id, session=db_session)
+
+    attach_payload = build_attach_payload(module)
+    module_ports_payload = build_module_ports_payload(module, db_session)
+    for port in module_ports_payload:
+        port["initial_value"] = boundary_initial_value
+    attach_payload["module_ports"] = module_ports_payload
+    module_artifact_hash = compute_module_artifact_hash(
+        {"attach_payload": attach_payload, "module_ports": module_ports_payload}
+    )
+    create_snapshot(
+        model_module_id=module.id,
+        run_record_id=run_record.id,
+        execution_kind=ModuleExecutionKind.CALIBRATION,
+        module_artifact_hash=module_artifact_hash,
+        snapshot_payload={
+            "boundary_ports": [
+                {
+                    "port_id": p["port_id"],
+                    "species_id": p["species_id"],
+                    "direction": p["direction"],
+                    "treatment_type": "EXTERNALLY_CONTROLLED",
+                    "resolution_status": "RESOLVED",
+                    "initial_value": p["initial_value"],
+                    "unit": p["unit"],
+                    "value_source": None,
+                    "decided_by": "test-user",
+                    "decided_at": None,
+                }
+                for p in module_ports_payload
+            ],
+            "calibration_config": {},
+            "dataset_references": None,
+            "contract_versions": {},
+            "attach_payload": attach_payload,
+            "module_ports_payload": module_ports_payload,
+        },
+        session=db_session,
+    )
+
     return complete_run(
         run_record_id=run_record.id,
         status=RunStatus.SUCCEEDED,
@@ -592,6 +649,275 @@ def test_request_module_validation_creates_immutable_snapshot(db_session, monkey
     assert payload["boundary_ports"][0]["species_id"] == "s1"
     assert payload["module_handoff_summary"]["species_count"] == 1
 
+    calibration_snapshot = get_snapshot_for_run(db_session, calib_run.id)
+    assert payload["pinned_to_calibration_snapshot"] is True
+    assert payload["calibration_snapshot_id"] == str(calibration_snapshot.id)
+    assert payload["pinned_module_artifact_hash"] == calibration_snapshot.module_artifact_hash
+    assert snapshot.module_artifact_hash == calibration_snapshot.module_artifact_hash
+
+
+# --- Boundary-Condition Pinning increment: pinned reconstruction -----------------------------
+
+
+def test_validation_uses_pinned_boundary_value_not_current_module_state(db_session, monkeypatch):
+    """Task instructions §1/§2/§6: calibration ran under boundary value A; the module's own
+    boundary decision is then changed to B; a validation request for that calibration must
+    still be sent to the harness with A, never the module's current B."""
+    project_id, subproject_id = _make_ids(db_session)
+    _run, module = _make_run_with_module(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    (port,) = persist_candidate_boundary_ports(
+        model_module_id=module.id,
+        candidates=[{"species_id": "s1", "direction": "INPUT"}],
+        session=db_session,
+    )
+    submit_boundary_decision(
+        port_id=port.id,
+        treatment_type=ModuleBoundaryTreatmentType.EXTERNALLY_CONTROLLED,
+        session=db_session,
+        initial_value=Decimal("1"),
+        decided_by="test-user",
+    )
+    calib_run = _make_succeeded_calibration_run(
+        db_session,
+        module,
+        project_id=project_id,
+        subproject_id=subproject_id,
+        boundary_initial_value="1",
+    )
+
+    # The module's own boundary decision is revised AFTER calibration -- B, not A.
+    submit_boundary_decision(
+        port_id=port.id,
+        treatment_type=ModuleBoundaryTreatmentType.EXTERNALLY_CONTROLLED,
+        session=db_session,
+        initial_value=Decimal("999"),
+        decided_by="someone-else",
+    )
+
+    captured = {}
+
+    def _fake_invoke(request):
+        captured["request"] = request
+        return _succeeding_result(request)
+
+    monkeypatch.setattr(module_validation_orchestrator, "invoke_module_validation", _fake_invoke)
+
+    module_validation_orchestrator.request_module_validation(
+        model_module_id=module.id,
+        subproject_id=subproject_id,
+        project_id=project_id,
+        calibration_run_record_id=calib_run.id,
+        validation_request=_valid_validation_request(),
+        session=db_session,
+    )
+
+    (sent_port,) = captured["request"].attach_payload["module_ports"]
+    assert sent_port["initial_value"] == "1"  # the calibration-time value A, never "999"
+
+
+def test_validation_with_pinning_disabled_uses_current_module_state(db_session, monkeypatch):
+    """The ``pin_to_calibration_snapshot=False`` escape hatch (task instructions: "unless an
+    explicit future workflow intentionally requests otherwise") -- the unchanged-current-state
+    case must still work, and the resulting snapshot discloses that pinning was not used."""
+    project_id, subproject_id = _make_ids(db_session)
+    _run, module = _make_run_with_module(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    (port,) = persist_candidate_boundary_ports(
+        model_module_id=module.id,
+        candidates=[{"species_id": "s1", "direction": "INPUT"}],
+        session=db_session,
+    )
+    submit_boundary_decision(
+        port_id=port.id,
+        treatment_type=ModuleBoundaryTreatmentType.EXTERNALLY_CONTROLLED,
+        session=db_session,
+        initial_value=Decimal("1"),
+        decided_by="test-user",
+    )
+    calib_run = _make_succeeded_calibration_run(
+        db_session,
+        module,
+        project_id=project_id,
+        subproject_id=subproject_id,
+        boundary_initial_value="1",
+    )
+    submit_boundary_decision(
+        port_id=port.id,
+        treatment_type=ModuleBoundaryTreatmentType.EXTERNALLY_CONTROLLED,
+        session=db_session,
+        initial_value=Decimal("999"),
+        decided_by="someone-else",
+    )
+
+    captured = {}
+
+    def _fake_invoke(request):
+        captured["request"] = request
+        return _succeeding_result(request)
+
+    monkeypatch.setattr(module_validation_orchestrator, "invoke_module_validation", _fake_invoke)
+
+    val_run = module_validation_orchestrator.request_module_validation(
+        model_module_id=module.id,
+        subproject_id=subproject_id,
+        project_id=project_id,
+        calibration_run_record_id=calib_run.id,
+        validation_request=_valid_validation_request(),
+        session=db_session,
+        pin_to_calibration_snapshot=False,
+    )
+
+    (sent_port,) = captured["request"].attach_payload["module_ports"]
+    assert sent_port["initial_value"] == "999"  # the module's own current state, not pinned
+
+    payload = read_snapshot_payload(get_snapshot_for_run(db_session, val_run.id))
+    assert payload["pinned_to_calibration_snapshot"] is False
+    assert payload["pinned_module_artifact_hash"] is None
+    assert payload["calibration_snapshot_id"] is None
+
+
+def test_request_module_validation_rejects_calibration_run_with_no_snapshot(db_session):
+    """Task instructions §5: missing calibration snapshot data must fail clearly, never
+    silently fall back to the module's current state."""
+    project_id, subproject_id = _make_ids(db_session)
+    _run, module = _make_run_with_module(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    _resolve_to_simulation_ready(db_session, module)
+    run_record = create_run_record(
+        subproject_id=subproject_id,
+        stage=RunStage.AGENT4,
+        session=db_session,
+        model_id=module.root_model_id,
+    )
+    run_record.model_module_id = module.id
+    db_session.flush()
+    start_run(run_record_id=run_record.id, session=db_session)
+    calib_run_no_snapshot = complete_run(
+        run_record_id=run_record.id,
+        status=RunStatus.SUCCEEDED,
+        session=db_session,
+        artifact_reference=json.dumps(
+            {"module_id": "modA", "modularization_id": "cand-root", "agent4_report": _AGENT4_REPORT}
+        ),
+    )
+
+    with pytest.raises(ModuleValidationValidationError, match="has no ModuleExecutionSnapshot"):
+        module_validation_orchestrator.request_module_validation(
+            model_module_id=module.id,
+            subproject_id=subproject_id,
+            project_id=project_id,
+            calibration_run_record_id=calib_run_no_snapshot.id,
+            validation_request=_valid_validation_request(),
+            session=db_session,
+        )
+
+
+def test_request_module_validation_rejects_calibration_snapshot_missing_pinned_fields(
+    db_session,
+):
+    """A calibration snapshot predating this increment's own additive ``attach_payload``/
+    ``module_ports_payload`` fields (simulated here directly) must also fail clearly."""
+    from app.persistence.module_execution_snapshot import (
+        compute_module_artifact_hash,
+        create_snapshot,
+    )
+
+    project_id, subproject_id = _make_ids(db_session)
+    _run, module = _make_run_with_module(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    _resolve_to_simulation_ready(db_session, module)
+    run_record = create_run_record(
+        subproject_id=subproject_id,
+        stage=RunStage.AGENT4,
+        session=db_session,
+        model_id=module.root_model_id,
+    )
+    run_record.model_module_id = module.id
+    db_session.flush()
+    start_run(run_record_id=run_record.id, session=db_session)
+    create_snapshot(
+        model_module_id=module.id,
+        run_record_id=run_record.id,
+        execution_kind=ModuleExecutionKind.CALIBRATION,
+        module_artifact_hash=compute_module_artifact_hash({"legacy": True}),
+        snapshot_payload={
+            "boundary_ports": [],
+            "calibration_config": {},
+            "dataset_references": None,
+        },
+        session=db_session,
+    )
+    legacy_calib_run = complete_run(
+        run_record_id=run_record.id,
+        status=RunStatus.SUCCEEDED,
+        session=db_session,
+        artifact_reference=json.dumps(
+            {"module_id": "modA", "modularization_id": "cand-root", "agent4_report": _AGENT4_REPORT}
+        ),
+    )
+
+    with pytest.raises(
+        ModuleValidationValidationError, match="does not carry a pinned attach_payload"
+    ):
+        module_validation_orchestrator.request_module_validation(
+            model_module_id=module.id,
+            subproject_id=subproject_id,
+            project_id=project_id,
+            calibration_run_record_id=legacy_calib_run.id,
+            validation_request=_valid_validation_request(),
+            session=db_session,
+        )
+
+
+def test_pinned_validation_fresh_session_reload_preserves_pinned_behavior(db_session, monkeypatch):
+    project_id, subproject_id = _make_ids(db_session)
+    _run, module = _make_run_with_module(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    (port,) = persist_candidate_boundary_ports(
+        model_module_id=module.id,
+        candidates=[{"species_id": "s1", "direction": "INPUT"}],
+        session=db_session,
+    )
+    submit_boundary_decision(
+        port_id=port.id,
+        treatment_type=ModuleBoundaryTreatmentType.EXTERNALLY_CONTROLLED,
+        session=db_session,
+        initial_value=Decimal("1"),
+    )
+    calib_run = _make_succeeded_calibration_run(
+        db_session,
+        module,
+        project_id=project_id,
+        subproject_id=subproject_id,
+        boundary_initial_value="1",
+    )
+    monkeypatch.setattr(
+        module_validation_orchestrator, "invoke_module_validation", _succeeding_result
+    )
+    val_run = module_validation_orchestrator.request_module_validation(
+        model_module_id=module.id,
+        subproject_id=subproject_id,
+        project_id=project_id,
+        calibration_run_record_id=calib_run.id,
+        validation_request=_valid_validation_request(),
+        session=db_session,
+    )
+    run_id = val_run.id
+    calibration_snapshot_id = get_snapshot_for_run(db_session, calib_run.id).id
+
+    db_session.expire_all()
+
+    reloaded_payload = read_snapshot_payload(get_snapshot_for_run(db_session, run_id))
+    assert reloaded_payload["pinned_to_calibration_snapshot"] is True
+    assert reloaded_payload["calibration_snapshot_id"] == str(calibration_snapshot_id)
+    assert reloaded_payload["boundary_ports"][0]["initial_value"] == "1"
+
 
 # --- immutability: a later boundary/calibration change never touches a historical snapshot ---
 
@@ -980,6 +1306,141 @@ def test_real_full_validation_smoke_uses_correct_calibrated_parameter_and_indepe
         fitted = {p["target_id"]: p["fitted_value"] for p in payload["calibrated_parameters"]}
         assert fitted["k_reaction-2_protein-2"] == pytest.approx(_TRUE_K2, rel=0.05)
         assert payload["module_handoff_summary"]["reaction_count"] == 2
+    finally:
+        import shutil
+
+        for run_id in (calib_run.id, val_run.id):
+            run_dir = HARNESS_REPO_DIR / "artifacts" / "runs" / str(run_id)
+            if run_dir.is_dir():
+                shutil.rmtree(run_dir)
+
+
+@pytest.mark.skipif(_HARNESS_UNAVAILABLE is not None, reason=str(_HARNESS_UNAVAILABLE))
+def test_real_pinning_smoke_validation_still_uses_calibration_time_boundary_value(db_session):
+    """The one required real subprocess test for this increment: calibrate module with
+    boundary value A -> change the persisted module boundary to B -> validate the selected
+    calibration -> the materialized Antimony text Agent 5 actually receives still declares A,
+    never B (task instructions: real subprocess integration test).
+
+    Reads the harness's own on-disk materialized handoff artifact directly (the only place the
+    actually-used boundary value is visible as a real Antimony ``const`` declaration -- the
+    Workbench's own persisted snapshot/result never echo the raw Antimony text, only summaries/
+    structured arrays), exactly mirroring the technique the Boundary-Condition Semantics
+    increment's own original real smoke test already established.
+    """
+    project_id, subproject_id = _make_ids(db_session)
+    module = _two_module_split_run_with_dynamics(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    assert module.execution_status.value == "SIMULATION_READY"
+
+    (s1_port,) = [
+        p
+        for p in list_boundary_ports_for_module(db_session, module.id)
+        if p.species_id == "compound-S1::in::compartment-1"
+    ]
+    assert s1_port.initial_value == Decimal(str(_S1_FIXED))  # boundary value A, set at setup
+
+    train_t = [1.0, 2.0, 4.0, 6.0, 8.0, 12.0, 16.0, 20.0]
+    train_v = [(_K1 * _S1_FIXED / _TRUE_K2) * (1 - math.exp(-_TRUE_K2 * t)) for t in train_t]
+    calib_run = module_calibration_orchestrator.request_module_calibration(
+        model_module_id=module.id,
+        subproject_id=subproject_id,
+        project_id=project_id,
+        calibration_request={
+            "request_id": "real-pinning-calib-req",
+            "targets": [
+                {
+                    "target_kind": "PARAMETER",
+                    "target_id": "k_reaction-2_protein-2",
+                    "bounds": {"lower": 0.001, "upper": 5.0},
+                }
+            ],
+            "observations": {
+                "observation_set_id": "modA-s2-train",
+                "observations": [
+                    {
+                        "observation_id": "obs-train",
+                        "target_species_id": "compound-S2::in::compartment-1",
+                        "kind": "TIME_SERIES",
+                        "partition": "TRAIN",
+                        "time_points": train_t,
+                        "values": train_v,
+                    }
+                ],
+            },
+        },
+        session=db_session,
+    )
+    assert calib_run.status is RunStatus.SUCCEEDED, calib_run.error_summary
+
+    # The module's own persisted boundary is changed to B *after* calibration.
+    _BOUNDARY_B = "777"
+    submit_boundary_decision(
+        port_id=s1_port.id,
+        treatment_type=ModuleBoundaryTreatmentType.EXTERNALLY_CONTROLLED,
+        session=db_session,
+        initial_value=Decimal(_BOUNDARY_B),
+        decided_by="someone-else",
+    )
+    db_session.refresh(module)
+    assert module.execution_status.value == "SIMULATION_READY"  # still ready, just a new value
+
+    val_t = [3.0, 10.0, 18.0]
+    val_v = [(_K1 * _S1_FIXED / _TRUE_K2) * (1 - math.exp(-_TRUE_K2 * t)) for t in val_t]
+    val_run = module_validation_orchestrator.request_module_validation(
+        model_module_id=module.id,
+        subproject_id=subproject_id,
+        project_id=project_id,
+        calibration_run_record_id=calib_run.id,
+        validation_request={
+            "request_id": "real-pinning-val-req",
+            "validation_observations": {
+                "observation_set_id": "modA-s2-held-out",
+                "observations": [
+                    {
+                        "observation_id": "obs-val",
+                        "target_species_id": "compound-S2::in::compartment-1",
+                        "kind": "TIME_SERIES",
+                        "time_points": val_t,
+                        "values": val_v,
+                    }
+                ],
+            },
+        },
+        session=db_session,
+    )
+    try:
+        assert val_run.status is RunStatus.SUCCEEDED, val_run.error_summary
+
+        # Provenance: the validation snapshot references the calibration run and its own
+        # snapshot, and its own pinned hash matches the calibration's recorded hash exactly.
+        calibration_snapshot = get_snapshot_for_run(db_session, calib_run.id)
+        validation_snapshot = get_snapshot_for_run(db_session, val_run.id)
+        validation_payload = read_snapshot_payload(validation_snapshot)
+        assert validation_payload["pinned_to_calibration_snapshot"] is True
+        assert validation_payload["calibration_run_record_id"] == str(calib_run.id)
+        assert validation_payload["calibration_snapshot_id"] == str(calibration_snapshot.id)
+        assert validation_payload["pinned_module_artifact_hash"] == (
+            calibration_snapshot.module_artifact_hash
+        )
+        assert validation_snapshot.module_artifact_hash == calibration_snapshot.module_artifact_hash
+
+        # The real proof: read the harness's own on-disk materialized handoff directly, and
+        # confirm the Antimony text Agent 5 actually received still declares A, never B.
+        handoff_path = (
+            HARNESS_REPO_DIR
+            / "artifacts"
+            / "runs"
+            / str(val_run.id)
+            / f"module_simulation_handoff_{val_run.id}.json"
+        )
+        handoff = json.loads(handoff_path.read_text())
+        s1_symbol = handoff["antimony_symbol_map"]["species"]["compound-S1::in::compartment-1"]
+        antimony_text = handoff["antimony_text"]
+        assert f"const {s1_symbol};" in antimony_text
+        assert f"{s1_symbol} = {int(_S1_FIXED)};" in antimony_text  # A (10), pinned
+        assert f"{s1_symbol} = {_BOUNDARY_B};" not in antimony_text  # never B (777)
     finally:
         import shutil
 

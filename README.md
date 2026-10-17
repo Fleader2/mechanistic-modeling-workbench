@@ -105,6 +105,13 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
   used as calibration input, and captures its own immutable `ModuleExecutionSnapshot`
   (`execution_kind=VALIDATION`) before the harness is ever invoked. See
   `docs/10_module_level_agent5_validation.md`.
+* **Boundary-Condition Pinning for module validation**: by default, `request_module
+  _validation` now reconstructs the Agent 2 materialization input from the *originating
+  calibration run's own immutable snapshot* -- never the module's current, possibly
+  since-revised boundary state -- so a boundary decision changed after calibration never
+  alters a validation run based on that calibration. An explicit `pin_to_calibration_snapshot
+  =False` escape hatch still validates against current conditions when genuinely wanted. See
+  `docs/11_module_validation_boundary_pinning.md`.
 
 ## Explicitly out of scope (owned elsewhere)
 

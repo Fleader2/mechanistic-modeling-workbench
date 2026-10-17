@@ -107,12 +107,13 @@ Agent 5 therefore always validates the module's own standalone artifact -- never
 model -- against the exact calibration result the caller named, never a different module's or
 a stale one.
 
-**Disclosed design choice**: boundary conditions used for validation are the module's
-*current* resolved state, not necessarily frozen at calibration time -- if a human revises a
-boundary decision between calibration and validation, Agent 5 validates the frozen calibrated
-parameters under the *new* structural assumption. This is captured transparently in the
-snapshot (both the boundary-ports copy and the calibration reference are always on file for
-audit) rather than silently hidden; see Remaining scientific limitations.
+**Superseded by the Boundary-Condition Pinning increment** (see
+`docs/11_module_validation_boundary_pinning.md`): by default, boundary conditions used for
+validation are now the *calibration-time* conditions, read back verbatim from the
+originating calibration run's own immutable snapshot -- never the module's current, possibly
+since-revised state. An explicit `pin_to_calibration_snapshot=False` escape hatch still
+reproduces this document's own originally-described behavior (validate under the module's
+*current* live conditions) for a future workflow that genuinely wants that.
 
 ## Persistence
 
@@ -158,8 +159,10 @@ are untouched.
   mechanism); nothing prevents a caller from pasting the identical numeric values into a
   validation request without going through a tracked `DatasetReference`. This is a disclosed
   gap, not a fabricated independence guarantee.
-* Boundary conditions used for validation are the module's *current* state, not pinned to what
-  calibration itself used -- see the "Disclosed design choice" above.
+* ~~Boundary conditions used for validation are the module's *current* state, not pinned to
+  what calibration itself used~~ -- resolved by the Boundary-Condition Pinning increment
+  (`docs/11_module_validation_boundary_pinning.md`): pinned to the calibration's own snapshot
+  by default.
 * No hierarchical validation-result aggregation and no dynamic-coupling execution (explicitly
   out of scope, unchanged from prior increments).
 * No GUI (explicitly out of scope).

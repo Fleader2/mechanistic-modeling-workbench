@@ -108,6 +108,49 @@ def _validate_validation_request(validation_request: dict, module: ModelModule) 
             )
 
 
+def _resolve_pinned_materialization_input(
+    session: Session, calibration_run_record_id: UUID
+) -> tuple[dict, list[dict], list[dict], str, UUID]:
+    """The exact Agent 2 materialization input (``attach_payload`` and its own merged
+    ``module_ports``) -- and the frozen ``boundary_ports`` summary alongside it -- the
+    originating calibration run actually used, read back verbatim from that run's own
+    immutable ``ModuleExecutionSnapshot`` (Boundary-Condition Pinning increment, task
+    instructions §1/§2). Never re-derived from this module's own *current* (and possibly
+    since-revised) boundary ports or ``attach_payload`` -- a validation run must reflect the
+    conditions that produced the calibration it is validating, not whatever the module's own
+    live state happens to be at validation time (task instructions §6).
+
+    Returns ``(attach_payload, module_ports_payload, boundary_ports, module_artifact_hash,
+    calibration_snapshot_id)``. Raises ``ModuleValidationValidationError`` -- never silently
+    falling back to the module's current state (task instructions §5) -- if the calibration
+    run has no snapshot at all, or if that snapshot predates this increment's own additive
+    ``attach_payload``/``module_ports_payload`` fields.
+    """
+    calibration_snapshot = get_snapshot_for_run(session, calibration_run_record_id)
+    if calibration_snapshot is None:
+        raise ModuleValidationValidationError(
+            f"calibration run {calibration_run_record_id} has no ModuleExecutionSnapshot -- "
+            "cannot reconstruct the calibrated module execution conditions"
+        )
+    payload = read_snapshot_payload(calibration_snapshot)
+    attach_payload = payload.get("attach_payload")
+    module_ports_payload = payload.get("module_ports_payload")
+    if attach_payload is None or module_ports_payload is None:
+        raise ModuleValidationValidationError(
+            f"calibration run {calibration_run_record_id}'s own snapshot does not carry a "
+            "pinned attach_payload/module_ports_payload -- cannot reconstruct the calibrated "
+            "module execution conditions (likely a snapshot captured before boundary-condition "
+            "pinning was introduced)"
+        )
+    return (
+        attach_payload,
+        module_ports_payload,
+        payload.get("boundary_ports", []),
+        calibration_snapshot.module_artifact_hash,
+        calibration_snapshot.id,
+    )
+
+
 def _resolve_calibration_report(
     session: Session, calibration_run_record_id: UUID, *, model_module_id: UUID
 ) -> dict:
@@ -224,11 +267,23 @@ def request_module_validation(
     correlation_id: str | None = None,
     notes: str | None = None,
     run_record_id: UUID | None = None,
+    pin_to_calibration_snapshot: bool = True,
 ) -> RunRecord:
     """Request a real Agent 5 validation of one already-calibrated hierarchy module's own
     frozen parameter estimates against independent, held-out experimental data (reusing the
     harness's own module-validation canonical entrypoint -- never a whole-model Agent 5 run,
     and never Agent 2/Agent 5's own logic duplicated here).
+
+    **Pinned to the calibration's own conditions by default** (Boundary-Condition Pinning
+    increment, task instructions §1-§6): when ``pin_to_calibration_snapshot`` is ``True`` (the
+    default), the Agent 2 materialization input (``attach_payload``/``module_ports``) and the
+    boundary-ports summary recorded in the validation's own snapshot are both read back
+    verbatim from the *originating calibration run's own* immutable ``ModuleExecutionSnapshot``
+    -- never from this module's own current, possibly since-revised boundary state. A module
+    boundary decision changed after calibration therefore never alters a validation run based
+    on that calibration. Pass ``False`` only for an explicit, intentional future workflow that
+    genuinely wants to validate against the module's *current* live conditions instead -- not
+    used by anything in this repository today.
 
     **Gated on execution readiness and a valid prior calibration**, extending
     ``model_module_orchestrator.request_module_simulation``'s own gate: raises ``ValueError``
@@ -312,16 +367,49 @@ def request_module_validation(
 
     run_record = start_run(run_record_id=run_record.id, session=session)
 
-    attach_payload = build_attach_payload(module)
-    module_ports_payload = build_module_ports_payload(module, session)
-    attach_payload["module_ports"] = module_ports_payload
-    module_artifact_hash = compute_module_artifact_hash(
-        {"attach_payload": attach_payload, "module_ports": module_ports_payload}
-    )
+    calibration_snapshot_id: UUID | None = None
+    pinned_module_artifact_hash: str | None = None
+    if pin_to_calibration_snapshot:
+        (
+            pinned_attach_payload,
+            module_ports_payload,
+            boundary_ports_for_snapshot,
+            pinned_module_artifact_hash,
+            calibration_snapshot_id,
+        ) = _resolve_pinned_materialization_input(session, calibration_run_record_id)
+        attach_payload = dict(pinned_attach_payload)  # own copy; never mutate the snapshot's own
+        attach_payload["module_ports"] = module_ports_payload
+        module_artifact_hash = compute_module_artifact_hash(
+            {"attach_payload": attach_payload, "module_ports": module_ports_payload}
+        )
+        if module_artifact_hash != pinned_module_artifact_hash:
+            # The exact bytes read back from the calibration's own snapshot must hash
+            # identically to what that snapshot itself recorded -- anything else means the
+            # pinned conditions could not be faithfully reconstructed, and this must fail
+            # clearly rather than proceed on data that may not actually match (task
+            # instructions §5).
+            raise ModuleValidationValidationError(
+                f"pinned materialization input for calibration run {calibration_run_record_id} "
+                "does not reproduce its own recorded module_artifact_hash -- cannot "
+                "reconstruct the calibrated module execution conditions"
+            )
+    else:
+        attach_payload = build_attach_payload(module)
+        module_ports_payload = build_module_ports_payload(module, session)
+        attach_payload["module_ports"] = module_ports_payload
+        module_artifact_hash = compute_module_artifact_hash(
+            {"attach_payload": attach_payload, "module_ports": module_ports_payload}
+        )
+        boundary_ports_for_snapshot = _boundary_ports_snapshot(session, module.id)
 
     snapshot_payload: dict = {
-        "boundary_ports": _boundary_ports_snapshot(session, module.id),
+        "boundary_ports": boundary_ports_for_snapshot,
         "calibration_run_record_id": str(calibration_run_record_id),
+        "calibration_snapshot_id": (
+            str(calibration_snapshot_id) if calibration_snapshot_id is not None else None
+        ),
+        "pinned_to_calibration_snapshot": pin_to_calibration_snapshot,
+        "pinned_module_artifact_hash": pinned_module_artifact_hash,
         "calibrated_parameters": agent4_report.get("calibration", {}).get(
             "parameter_estimates", []
         ),
