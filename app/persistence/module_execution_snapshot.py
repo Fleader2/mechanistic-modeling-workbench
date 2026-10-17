@@ -8,6 +8,7 @@ created, a snapshot is never modified by any code in this repository (see
 
 from __future__ import annotations
 
+import hashlib
 import json
 from uuid import UUID
 
@@ -16,6 +17,19 @@ from sqlalchemy.orm import Session
 
 from app.models.enums import ModuleExecutionKind
 from app.models.module_execution_snapshot import ModuleExecutionSnapshot
+
+
+def compute_module_artifact_hash(payload: dict) -> str:
+    """A deterministic ``sha256`` hex digest of ``payload``'s own canonical (sorted-key) JSON
+    encoding -- the content-addressed identity of one module-materialization input, computable
+    before any harness subprocess is ever invoked (see
+    ``app.models.module_execution_snapshot``'s own module docstring for why this, rather than a
+    hash of Agent 2's own output, is what gets snapshotted). Shared by every module-scoped
+    orchestrator that creates a snapshot (calibration, validation, and -- eventually --
+    simulation), never duplicated between them.
+    """
+    canonical = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def create_snapshot(
@@ -78,6 +92,7 @@ def read_snapshot_payload(snapshot: ModuleExecutionSnapshot) -> dict:
 
 
 __all__ = [
+    "compute_module_artifact_hash",
     "create_snapshot",
     "get_snapshot_for_run",
     "list_snapshots_for_module",

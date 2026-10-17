@@ -96,6 +96,15 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
   never alters a historical record. Repeated calibration with different data/boundary
   assumptions never overwrites an earlier result. See
   `docs/09_module_level_agent4_calibration.md`.
+* **Module-Level Agent5 Validation and Experimental Design**
+  (`app/orchestration/module_validation_orchestrator.py`): lets an already-calibrated module
+  undergo real Agent 5 validation against *independent* held-out experimental data and receive
+  experimental-design recommendations -- Agent 3/Agent 4 are never re-invoked; a prior,
+  already-succeeded calibration run's own frozen report is reused as-is. Requires a valid
+  `SUCCEEDED` calibration result for the exact module, rejects a validation dataset already
+  used as calibration input, and captures its own immutable `ModuleExecutionSnapshot`
+  (`execution_kind=VALIDATION`) before the harness is ever invoked. See
+  `docs/10_module_level_agent5_validation.md`.
 
 ## Explicitly out of scope (owned elsewhere)
 

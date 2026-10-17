@@ -206,12 +206,15 @@ SIMULATION_READY
 Added by the Module-Level Agent4 Calibration with Immutable Execution-Condition Provenance
 increment (migration `0008_module_execution_snapshot`) -- which downstream agent one
 `module_execution_snapshot` row's own execution was for. Denormalized from the owning
-`run_record.stage` (`AGENT3`/`AGENT4`) at creation time. Only `CALIBRATION` is wired up by
-this increment; `SIMULATION` is schema-ready for a later increment to adopt without a
-migration. See `docs/09_module_level_agent4_calibration.md`.
+`run_record.stage` (`AGENT3`/`AGENT4`/`AGENT5`) at creation time. `VALIDATION` was added by the
+Module-Level Agent5 Validation and Experimental Design increment (migration
+`0009_validation_execution_kind`, a one-way enum addition). `SIMULATION` remains schema-ready
+for a later increment to adopt without a migration. See
+`docs/09_module_level_agent4_calibration.md`/`docs/10_module_level_agent5_validation.md`.
 ```text
 SIMULATION
 CALIBRATION
+VALIDATION
 ```
 
 ---
@@ -715,13 +718,18 @@ a `dataset_reference`'s own catalog row never alters a snapshot already on file.
 `module_artifact_hash` is a `sha256` hex digest of the canonical JSON encoding of the exact
 Agent 2 materialization input (`attach_payload` plus its own merged `module_ports`) --
 deterministic and always computable before any harness subprocess is invoked, so a snapshot
-exists even for a run that later fails. `snapshot_payload` is an opaque, pre-serialized JSON
-object (decoded only by `app.persistence.module_execution_snapshot.read_snapshot_payload`, the
-one documented site, mirroring `model_module.attach_payload`'s own established discipline)
+exists even for a run that later fails (`app.persistence.module_execution_snapshot
+.compute_module_artifact_hash`, the one shared helper every module-scoped orchestrator that
+creates a snapshot reuses). `snapshot_payload` is an opaque, pre-serialized JSON object
+(decoded only by `app.persistence.module_execution_snapshot.read_snapshot_payload`, the one
+documented site, mirroring `model_module.attach_payload`'s own established discipline)
 carrying `{"boundary_ports", "contract_versions"}` always, `{"calibration_config",
-"dataset_references"}` only for `execution_kind=CALIBRATION`, and `{"module_handoff_summary",
+"dataset_references"}` only for `execution_kind=CALIBRATION`, `{"calibration_run_record_id",
+"calibrated_parameters", "validation_config", "dataset_references"}` only for
+`execution_kind=VALIDATION` (the originating calibration run's own frozen parameter
+estimates, copied by value, never a live reference), and `{"module_handoff_summary",
 "parameters", "species"}` only once the underlying harness call actually completed. See
-`docs/09_module_level_agent4_calibration.md`.
+`docs/09_module_level_agent4_calibration.md`/`docs/10_module_level_agent5_validation.md`.
 
 ---
 
@@ -759,8 +767,9 @@ project
    |                       |
    |                       +-- model_module (parent_model_module_id, self-referential lineage)
    |                       |
-   |                       +-- run_record (model_module_id, an Agent 3 simulation of it, or
-   |                       |               an Agent 4 calibration of it)
+   |                       +-- run_record (model_module_id, an Agent 3 simulation of it, an
+   |                       |               Agent 4 calibration of it, or an Agent 5
+   |                       |               validation of it)
    |                       |
    |                       +-- module_boundary_port (ON DELETE CASCADE)
    |                       |

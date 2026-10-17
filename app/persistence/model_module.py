@@ -121,9 +121,26 @@ def build_attach_payload(model_module: ModelModule) -> dict:
     return json.loads(model_module.attach_payload)
 
 
+def known_component_ids_by_type(model_module: ModelModule) -> dict[str, set[str]]:
+    """``{component_type: {component_id, ...}}`` for this module's own members only -- a
+    hierarchy node's own ``attach_payload`` names every module of its own modularization (e.g.
+    a sibling module too), so memberships are always filtered to this module's own
+    ``module_id`` here. Shared by every module-scoped orchestrator that needs to validate a
+    caller-supplied id against this module's own real membership without a harness round-trip
+    (calibration, validation, ...) -- never duplicated between them."""
+    attach = build_attach_payload(model_module)
+    by_type: dict[str, set[str]] = {}
+    for membership in attach.get("memberships", []):
+        if membership["module_id"] != model_module.module_id:
+            continue
+        by_type.setdefault(membership["component_type"], set()).add(membership["component_id"])
+    return by_type
+
+
 __all__ = [
     "build_attach_payload",
     "get_model_module",
+    "known_component_ids_by_type",
     "list_model_modules_for_run",
     "materialize_accepted_modules",
 ]

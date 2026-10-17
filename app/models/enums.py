@@ -268,19 +268,23 @@ class ModelModuleExecutionStatus(StrEnum):
 
 class ModuleExecutionKind(StrEnum):
     """Which downstream agent one ``ModuleExecutionSnapshot`` row's own execution was for
-    (Module-Level Agent4 Calibration with Immutable Execution-Condition Provenance increment).
+    (Module-Level Agent4 Calibration with Immutable Execution-Condition Provenance increment;
+    ``VALIDATION`` added by the Module-Level Agent5 Validation and Experimental Design
+    increment, migration ``0009_module_execution_snapshot_validation_kind``, a one-way
+    PostgreSQL enum addition -- identical precedent to ``RunStatus.REQUIRES_USER_REVIEW``'s own
+    prior migration).
 
     A denormalized copy of information already implicit in the owning ``RunRecord.stage``
-    (``AGENT3`` vs ``AGENT4``) -- kept as its own column so a snapshot row is self-describing
-    without an eager join, exactly as ``ModelModule.depth``/``module_id`` are themselves
-    denormalized copies of their own producing ``HierarchyNode``'s fields. This table is
-    deliberately generic over both kinds from the start (only ``CALIBRATION`` is wired up by
-    this increment; ``SIMULATION`` support is schema-ready for a later increment to adopt
-    without any migration).
+    (``AGENT3``/``AGENT4``/``AGENT5``) -- kept as its own column so a snapshot row is
+    self-describing without an eager join, exactly as ``ModelModule.depth``/``module_id`` are
+    themselves denormalized copies of their own producing ``HierarchyNode``'s fields.
+    ``SIMULATION`` support remains schema-ready for a later increment to wire up without any
+    further migration.
     """
 
     SIMULATION = "SIMULATION"
     CALIBRATION = "CALIBRATION"
+    VALIDATION = "VALIDATION"
 
 
 __all__ = [

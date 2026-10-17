@@ -12,7 +12,6 @@ the exact inputs, moves a ``RunRecord`` through its own existing, unchanged stat
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import UTC, datetime
 from uuid import UUID
@@ -30,9 +29,13 @@ from app.models.run_record import RunRecord
 from app.orchestration.module_boundary_orchestrator import build_module_ports_payload
 from app.orchestration.module_calibration_harness_client import invoke_module_calibration
 from app.persistence.dataset_reference import get_dataset_reference
-from app.persistence.model_module import build_attach_payload, get_model_module
+from app.persistence.model_module import (
+    build_attach_payload,
+    get_model_module,
+    known_component_ids_by_type,
+)
 from app.persistence.module_boundary_port import list_boundary_ports_for_module
-from app.persistence.module_execution_snapshot import create_snapshot
+from app.persistence.module_execution_snapshot import compute_module_artifact_hash, create_snapshot
 from app.persistence.run_record import (
     complete_run,
     create_run_record,
@@ -48,19 +51,6 @@ class ModuleCalibrationValidationError(ValueError):
     """Raised when ``calibration_request`` is incomplete or names a target/species/dataset
     this module or project does not actually have -- never fabricated, always rejected before
     any harness call is ever made (task instructions §3)."""
-
-
-def _known_component_ids(module: ModelModule) -> dict[str, set[str]]:
-    """``{component_type: {component_id, ...}}`` for this module's own members only -- a
-    hierarchy node's own ``attach_payload`` names every module of its modularization (e.g. a
-    sibling module too), so memberships are always filtered to ``module.module_id`` here."""
-    attach = build_attach_payload(module)
-    by_type: dict[str, set[str]] = {}
-    for membership in attach.get("memberships", []):
-        if membership["module_id"] != module.module_id:
-            continue
-        by_type.setdefault(membership["component_type"], set()).add(membership["component_id"])
-    return by_type
 
 
 def _validate_calibration_request(calibration_request: dict, module: ModelModule) -> None:
@@ -80,7 +70,7 @@ def _validate_calibration_request(calibration_request: dict, module: ModelModule
         raise ModuleCalibrationValidationError(
             "calibration_request requires at least one calibration target"
         )
-    known = _known_component_ids(module)
+    known = known_component_ids_by_type(module)
     for target in targets:
         target_kind = target.get("target_kind")
         if target_kind not in _VALID_TARGET_KINDS:
@@ -123,16 +113,6 @@ def _validate_calibration_request(calibration_request: dict, module: ModelModule
                 f"observation {observation.get('observation_id')!r} has mismatched "
                 f"time_points/values lengths ({len(time_points)} vs {len(values)})"
             )
-
-
-def _canonical_hash(payload: dict) -> str:
-    """A deterministic ``sha256`` hex digest of ``payload``'s own canonical (sorted-key) JSON
-    encoding -- the content-addressed identity of one module-materialization input, computable
-    before any harness subprocess is ever invoked (see
-    ``app.models.module_execution_snapshot``'s own module docstring for why this, rather than a
-    hash of Agent 2's own output, is what gets snapshotted)."""
-    canonical = json.dumps(payload, sort_keys=True, default=str)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _boundary_ports_snapshot(session: Session, model_module_id: UUID) -> list[dict]:
@@ -280,7 +260,7 @@ def request_module_calibration(
     attach_payload = build_attach_payload(module)
     module_ports_payload = build_module_ports_payload(module, session)
     attach_payload["module_ports"] = module_ports_payload
-    module_artifact_hash = _canonical_hash(
+    module_artifact_hash = compute_module_artifact_hash(
         {"attach_payload": attach_payload, "module_ports": module_ports_payload}
     )
 
