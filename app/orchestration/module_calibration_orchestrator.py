@@ -43,6 +43,7 @@ from app.persistence.run_record import (
     resolve_stage1_inputs,
     start_run,
 )
+from app.units import find_observation_unit_conflict
 
 _VALID_TARGET_KINDS = {"PARAMETER": "PARAMETER", "INITIAL_CONDITION": "SPECIES"}
 
@@ -53,10 +54,18 @@ class ModuleCalibrationValidationError(ValueError):
     any harness call is ever made (task instructions §3)."""
 
 
-def _validate_calibration_request(calibration_request: dict, module: ModelModule) -> None:
+def _validate_calibration_request(
+    calibration_request: dict, module: ModelModule, session: Session
+) -> None:
     """Reject an incomplete or scientifically unsupported calibration request before it ever
     reaches the harness -- validated against this module's own durably-recorded membership
     (never a harness round-trip, never a fabricated id).
+
+    **Pre-flight dimensional check** (Structured Units and Dimensional-Consistency Validation
+    increment, task instructions §6): when an observation carries an optional ``"unit"`` key,
+    it is checked against the target species' own already-resolved boundary-port unit (if any)
+    and against every other observation's own declared unit for the identical species --
+    rejecting on a genuine dimensional incompatibility, never a harness round-trip.
 
     Raises ``ModuleCalibrationValidationError``.
     """
@@ -113,6 +122,18 @@ def _validate_calibration_request(calibration_request: dict, module: ModelModule
                 f"observation {observation.get('observation_id')!r} has mismatched "
                 f"time_points/values lengths ({len(time_points)} vs {len(values)})"
             )
+
+    boundary_units_by_species = {
+        p.species_id: p.unit for p in list_boundary_ports_for_module(session, module.id) if p.unit
+    }
+    conflict = find_observation_unit_conflict(observations, boundary_units_by_species)
+    if conflict is not None:
+        other_unit = conflict.get("boundary_unit", conflict.get("other_observation_unit"))
+        raise ModuleCalibrationValidationError(
+            f"observation for species {conflict['species_id']!r} declares a unit "
+            f"{conflict['observation_unit']!r} dimensionally incompatible with {other_unit!r} "
+            "-- never automatically reconciled or converted"
+        )
 
 
 def _boundary_ports_snapshot(session: Session, model_module_id: UUID) -> list[dict]:
@@ -219,7 +240,7 @@ def request_module_calibration(
         if existing.status in (RunStatus.SUCCEEDED, RunStatus.FAILED):
             return existing
 
-    _validate_calibration_request(calibration_request, module)
+    _validate_calibration_request(calibration_request, module, session)
 
     dataset_references_snapshot = (
         _dataset_references_snapshot(session, dataset_reference_ids, project_id=project_id)

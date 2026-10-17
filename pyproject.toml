@@ -14,6 +14,7 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "psycopg[binary]>=3.1",
+    "pint>=0.24",
 ]
 
 [project.optional-dependencies]

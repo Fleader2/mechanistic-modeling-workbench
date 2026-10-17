@@ -39,6 +39,7 @@ from app.persistence.model_module import list_model_modules_for_run
 from app.persistence.module_boundary_port import list_boundary_ports_for_module
 from app.persistence.module_execution_snapshot import get_snapshot_for_run
 from app.persistence.run_record import get_run_record
+from app.units import UnitComparisonStatus, compare_units
 
 #: Boundary treatments that carry a concrete, comparable value -- the identical vocabulary
 #: ``app.orchestration.module_boundary_orchestrator._STANDALONE_CAPABLE_TREATMENTS`` already
@@ -103,8 +104,18 @@ def _gather_module_facts(session: Session, module: ModelModule) -> dict:
                 d["dataset_reference_id"] for d in (payload.get("dataset_references") or ())
             ]
             calibration["execution_snapshot_id"] = str(snapshot.id)
+            #: ``{parameter_id: unit}`` for this module's own materialized parameters, read
+            #: back from the calibration snapshot's own ``parameters`` array (Agent2's own
+            #: already-recorded unit metadata -- never fabricated here). Lets
+            #: ``_detect_parameter_conflicts`` compare unit metadata for the identical
+            #: ``target_id``/``parameter_id`` namespace a fitted estimate already uses (task
+            #: instructions §3: "model parameters where unit metadata exists").
+            calibration["parameter_units"] = {
+                p["parameter_id"]: p.get("unit") for p in (payload.get("parameters") or ())
+            }
         else:
             calibration["execution_snapshot_id"] = None
+            calibration["parameter_units"] = {}
 
     validation_run = _latest_run_record(session, module.id, RunStage.AGENT5)
     validation: dict | None = None
@@ -186,6 +197,53 @@ def _is_parent_child(a: dict, b: dict) -> bool:
     )
 
 
+def _unit_compatibility_finding(
+    unit_a: str | None,
+    unit_b: str | None,
+    *,
+    message_prefix: str,
+    module_ids: list[str],
+    evidence: dict,
+) -> dict | None:
+    """Category 2 (``UNIT_INCOMPATIBILITY``): dimensional-compatibility check replacing bare
+    string equality (task instructions §7). ``None`` if both sides lack a unit entirely (there
+    is nothing to compare) or both resolve to the identical normalized unit (no disclosure
+    needed).
+
+    Severity reflects what was actually found, never a flat "units differ": a genuine
+    dimensional incompatibility is ``ERROR`` (a real logical conflict, worse than the prior
+    bare-string-mismatch ``WARNING``); an unparseable unit string is its own ``WARNING``
+    (distinct from a confirmed incompatibility -- it is not yet known whether the units would
+    even conflict); a unit recorded on only one side, or two dimensionally-equivalent but
+    differently-written units (e.g. ``"mM"`` vs ``"mmol/L"``), are each ``INFO`` disclosures,
+    never silently treated as either a conflict or a free conversion (task instructions §5: the
+    full ``compare_units`` result, including any conversion factor, is always embedded in the
+    returned finding's own evidence).
+    """
+    if unit_a is None and unit_b is None:
+        return None
+    comparison = compare_units(unit_a, unit_b)
+    status = comparison["status"]
+    if status == UnitComparisonStatus.MISSING.value:
+        severity, detail = "INFO", "has a unit recorded on only one side"
+    elif status == UnitComparisonStatus.INCOMPATIBLE.value:
+        severity, detail = "ERROR", "are declared in dimensionally incompatible units"
+    elif status == UnitComparisonStatus.MALFORMED.value:
+        severity, detail = "WARNING", "could not be parsed as a valid unit on at least one side"
+    else:
+        if comparison["unit_a"]["normalized_unit"] == comparison["unit_b"]["normalized_unit"]:
+            return None
+        severity, detail = "INFO", "use different, but dimensionally equivalent, units"
+    return _finding(
+        "UNIT_INCOMPATIBILITY",
+        severity,
+        f"{message_prefix} {detail} ({unit_a!r} vs {unit_b!r}) -- never automatically "
+        "converted or reconciled.",
+        module_ids,
+        {**evidence, "unit_comparison": comparison},
+    )
+
+
 def _detect_boundary_conflicts(a: dict, b: dict) -> list[dict]:
     """Categories 1 and 4 (and part of 7): shared boundary species across related modules,
     including unit comparisons, and insufficient-evidence disclosure when one side's own
@@ -246,31 +304,17 @@ def _detect_boundary_conflicts(a: dict, b: dict) -> list[dict]:
                             evidence,
                         )
                     )
-                unit_a, unit_b = port_a["unit"], port_b["unit"]
-                if unit_a is not None and unit_b is not None and unit_a != unit_b:
-                    findings.append(
-                        _finding(
-                            "UNIT_INCOMPATIBILITY",
-                            "WARNING",
-                            f"species {species_id!r} is declared in incompatible units across "
-                            f"module {a['module_id']!r} ({unit_a!r}) and {b['module_id']!r} "
-                            f"({unit_b!r}) -- never automatically converted or reconciled.",
-                            module_ids,
-                            evidence,
-                        )
-                    )
-                elif (unit_a is None) != (unit_b is None):
-                    findings.append(
-                        _finding(
-                            "UNIT_INCOMPATIBILITY",
-                            "INFO",
-                            f"species {species_id!r} has a unit recorded on only one side "
-                            f"(module {a['module_id']!r} vs {b['module_id']!r}) -- unit "
-                            "compatibility cannot be verified.",
-                            module_ids,
-                            evidence,
-                        )
-                    )
+                unit_finding = _unit_compatibility_finding(
+                    port_a["unit"],
+                    port_b["unit"],
+                    message_prefix=(
+                        f"species {species_id!r} (module {a['module_id']!r} vs {b['module_id']!r})"
+                    ),
+                    module_ids=module_ids,
+                    evidence=evidence,
+                )
+                if unit_finding is not None:
+                    findings.append(unit_finding)
             elif treatment_a != treatment_b:
                 findings.append(
                     _finding(
@@ -295,9 +339,25 @@ def _detect_parameter_conflicts(a: dict, b: dict) -> list[dict]:
         return findings
     estimates_a = {e["target_id"]: e for e in calib_a.get("parameter_estimates", [])}
     estimates_b = {e["target_id"]: e for e in calib_b.get("parameter_estimates", [])}
+    units_a = calib_a.get("parameter_units", {})
+    units_b = calib_b.get("parameter_units", {})
     for target_id in sorted(set(estimates_a) & set(estimates_b)):
         value_a = estimates_a[target_id]["fitted_value"]
         value_b = estimates_b[target_id]["fitted_value"]
+        module_ids = [a["model_module_id"], b["model_module_id"]]
+        evidence = {
+            "target_id": target_id,
+            "module_a": {
+                "module_id": a["module_id"],
+                "fitted_value": value_a,
+                "run_record_id": calib_a["run_record_id"],
+            },
+            "module_b": {
+                "module_id": b["module_id"],
+                "fitted_value": value_b,
+                "run_record_id": calib_b["run_record_id"],
+            },
+        }
         if value_a != value_b:
             findings.append(
                 _finding(
@@ -305,22 +365,21 @@ def _detect_parameter_conflicts(a: dict, b: dict) -> list[dict]:
                     "ERROR",
                     f"parameter {target_id!r} was fitted to two different values across module "
                     f"{a['module_id']!r} ({value_a}) and {b['module_id']!r} ({value_b}).",
-                    [a["model_module_id"], b["model_module_id"]],
-                    {
-                        "target_id": target_id,
-                        "module_a": {
-                            "module_id": a["module_id"],
-                            "fitted_value": value_a,
-                            "run_record_id": calib_a["run_record_id"],
-                        },
-                        "module_b": {
-                            "module_id": b["module_id"],
-                            "fitted_value": value_b,
-                            "run_record_id": calib_b["run_record_id"],
-                        },
-                    },
+                    module_ids,
+                    evidence,
                 )
             )
+        unit_finding = _unit_compatibility_finding(
+            units_a.get(target_id),
+            units_b.get(target_id),
+            message_prefix=(
+                f"parameter {target_id!r} (module {a['module_id']!r} vs {b['module_id']!r})"
+            ),
+            module_ids=module_ids,
+            evidence=evidence,
+        )
+        if unit_finding is not None:
+            findings.append(unit_finding)
     return findings
 
 

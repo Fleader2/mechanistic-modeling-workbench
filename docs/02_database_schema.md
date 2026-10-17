@@ -265,6 +265,20 @@ UNREVIEWED
 REVIEWED
 ```
 
+### UnitParseStatus
+(Structured Units and Dimensional-Consistency Validation increment, migration
+`0012_unit_resolution`.) Whether one raw unit string could be resolved against this
+Workbench's own `pint` registry (`app.units`). `MISSING` (no unit recorded) is kept distinct
+from `MALFORMED` (a unit string recorded but unparseable) -- a `unit_resolution` row is never
+created for `MISSING` at all (see that table's own section); the value exists in this enum
+only for the in-memory `app.units.resolve_unit_string` result, never actually written to this
+column.
+```text
+PARSED
+MALFORMED
+MISSING
+```
+
 ---
 
 # Table: project
@@ -873,6 +887,31 @@ describes. See `docs/13_cross_module_diagnostics.md`.
 
 ---
 
+# Table: unit_resolution
+
+(Structured Units and Dimensional-Consistency Validation increment, migration
+`0012_unit_resolution`.)
+
+```text
+id                   UUID PRIMARY KEY
+source_unit_string   VARCHAR NOT NULL UNIQUE
+normalized_unit      VARCHAR            -- pint's own short pretty form, e.g. "mM"; NULL if unparseable
+dimensionality       VARCHAR            -- pint's own dimensionality string; NULL if unparseable
+parse_status         unit_parse_status NOT NULL
+created_at           TIMESTAMP WITH TIME ZONE NOT NULL
+```
+
+A durable, content-addressed cache of every distinct, non-empty raw unit string this
+Workbench has ever resolved (`app.persistence.unit_resolution.resolve_and_persist_unit`) --
+standalone, with **no foreign key in or out**: unlike every other table in this schema, no
+column anywhere references `unit_resolution.id`, and this table references nothing. Callers
+resolve a raw unit string and get back a plain dict; they never need to join against this
+table directly. A `None`/blank unit string is never given a row here at all -- see
+`app.units`'s own module docstring. Immutable once created -- no persistence function ever
+updates an existing row. See `docs/14_structured_units.md`.
+
+---
+
 # Relationships
 
 ```text
@@ -937,6 +976,8 @@ modeling_decision
    +-- modeling_decision_option
            |
            +-- modeling_decision (selected_option_id, optional)
+
+unit_resolution   (standalone -- no foreign key in or out of this table anywhere)
 ```
 
 ---
@@ -974,6 +1015,7 @@ module_aggregate.target_model_module_id
 module_aggregate.hierarchy_run_record_id (composite with execution_kind)
 cross_module_diagnostic_run.hierarchy_run_record_id
 cross_module_diagnostic.diagnostic_run_id
+unit_resolution.source_unit_string
 ```
 
 ---
@@ -1037,3 +1079,6 @@ deleting the module or run it describes.
 identical reason (Cross-Module Consistency and Reconciliation Diagnostics increment).
 `cross_module_diagnostic` cascades from `cross_module_diagnostic_run` -- unlike that table, a
 single finding has no independent meaning apart from the sweep batch that produced it.
+
+`unit_resolution` has no delete behavior to specify -- it has no foreign key in or out of any
+other table (Structured Units and Dimensional-Consistency Validation increment).

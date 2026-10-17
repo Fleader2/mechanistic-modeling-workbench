@@ -366,6 +366,25 @@ class DiagnosticReviewStatus(StrEnum):
     REVIEWED = "REVIEWED"
 
 
+class UnitParseStatus(StrEnum):
+    """Whether one raw unit string could be resolved against the Workbench's own ``pint``
+    registry (Structured Units and Dimensional-Consistency Validation increment). The mapped
+    column type for ``app.models.unit_resolution.UnitResolution.parse_status`` -- see
+    ``app.units``'s own identical-named class for the full rationale (deliberately re-declared
+    here, not imported from ``app.units``, so every enum this schema maps to a real column
+    lives in this one module, matching every other enum in this file; ``app.units`` reads this
+    value only as its own plain ``.value`` string, never importing this class back).
+
+    ``MISSING`` (no unit recorded) is kept distinct from ``MALFORMED`` (a unit string recorded
+    but unparseable) -- never fabricated as either when the true state is unknown (task
+    instructions §9).
+    """
+
+    PARSED = "PARSED"
+    MALFORMED = "MALFORMED"
+    MISSING = "MISSING"
+
+
 __all__ = [
     "ConfidenceClass",
     "CrossModuleDiagnosticCategory",
@@ -391,5 +410,6 @@ __all__ = [
     "RunStage",
     "RunStatus",
     "SubprojectTaskType",
+    "UnitParseStatus",
     "WorkflowLifecycleStatus",
 ]

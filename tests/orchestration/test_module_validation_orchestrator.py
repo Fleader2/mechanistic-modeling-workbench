@@ -436,6 +436,46 @@ def test_request_module_validation_rejects_unknown_observation_species(db_sessio
         )
 
 
+def test_request_module_validation_rejects_dimensionally_incompatible_observation_unit(
+    db_session,
+):
+    """Structured Units and Dimensional-Consistency Validation increment (task instructions
+    §6): a validation observation's optional ``"unit"`` annotation that is genuinely
+    dimensionally incompatible with the target species' own resolved boundary unit is rejected
+    before any harness call."""
+    project_id, subproject_id = _make_ids(db_session)
+    _run, module = _make_run_with_module(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    (port,) = persist_candidate_boundary_ports(
+        model_module_id=module.id,
+        candidates=[{"species_id": "s1", "direction": "INPUT"}],
+        session=db_session,
+    )
+    submit_boundary_decision(
+        port_id=port.id,
+        treatment_type=ModuleBoundaryTreatmentType.EXTERNALLY_CONTROLLED,
+        session=db_session,
+        initial_value=Decimal("1"),
+        unit="mM",
+        decided_by="test-user",
+    )
+    calib_run = _make_succeeded_calibration_run(
+        db_session, module, project_id=project_id, subproject_id=subproject_id
+    )
+    bad = _valid_validation_request()
+    bad["validation_observations"]["observations"][0]["unit"] = "s"
+    with pytest.raises(ModuleValidationValidationError, match="dimensionally incompatible"):
+        module_validation_orchestrator.request_module_validation(
+            model_module_id=module.id,
+            subproject_id=subproject_id,
+            project_id=project_id,
+            calibration_run_record_id=calib_run.id,
+            validation_request=bad,
+            session=db_session,
+        )
+
+
 def test_request_module_validation_rejects_mismatched_time_points_and_values(db_session):
     project_id, subproject_id = _make_ids(db_session)
     _run, module = _make_run_with_module(

@@ -278,6 +278,81 @@ def test_request_module_calibration_rejects_unknown_observation_species(db_sessi
         )
 
 
+def test_request_module_calibration_rejects_dimensionally_incompatible_observation_unit(
+    db_session,
+):
+    """Structured Units and Dimensional-Consistency Validation increment (task instructions
+    §6): an observation's optional ``"unit"`` annotation that is genuinely dimensionally
+    incompatible with the target species' own resolved boundary unit is rejected before any
+    harness call -- never silently accepted or converted."""
+    project_id, subproject_id = _make_ids(db_session)
+    _run, module = _make_run_with_module(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    (port,) = persist_candidate_boundary_ports(
+        model_module_id=module.id,
+        candidates=[{"species_id": "s1", "direction": "INPUT"}],
+        session=db_session,
+    )
+    submit_boundary_decision(
+        port_id=port.id,
+        treatment_type=ModuleBoundaryTreatmentType.EXTERNALLY_CONTROLLED,
+        session=db_session,
+        initial_value=Decimal("1"),
+        unit="mM",
+        decided_by="test-user",
+    )
+    bad = _valid_calibration_request()
+    bad["observations"]["observations"][0]["unit"] = "s"
+    with pytest.raises(ModuleCalibrationValidationError, match="dimensionally incompatible"):
+        module_calibration_orchestrator.request_module_calibration(
+            model_module_id=module.id,
+            subproject_id=subproject_id,
+            project_id=project_id,
+            calibration_request=bad,
+            session=db_session,
+        )
+
+
+def test_request_module_calibration_accepts_equivalent_observation_unit(db_session, monkeypatch):
+    """The companion positive case: an observation unit that is dimensionally *equivalent* to
+    the target species' own boundary unit, merely written differently (``"mM"`` vs
+    ``"mmol/L"``), is accepted -- never rejected by what used to be a bare string-equality
+    check."""
+    project_id, subproject_id = _make_ids(db_session)
+    _run, module = _make_run_with_module(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    (port,) = persist_candidate_boundary_ports(
+        model_module_id=module.id,
+        candidates=[{"species_id": "s1", "direction": "INPUT"}],
+        session=db_session,
+    )
+    submit_boundary_decision(
+        port_id=port.id,
+        treatment_type=ModuleBoundaryTreatmentType.EXTERNALLY_CONTROLLED,
+        session=db_session,
+        initial_value=Decimal("1"),
+        unit="mM",
+        decided_by="test-user",
+    )
+    monkeypatch.setattr(
+        module_calibration_orchestrator, "invoke_module_calibration", _succeeding_result
+    )
+    good = _valid_calibration_request()
+    good["observations"]["observations"][0]["unit"] = "mmol/L"
+
+    run_record = module_calibration_orchestrator.request_module_calibration(
+        model_module_id=module.id,
+        subproject_id=subproject_id,
+        project_id=project_id,
+        calibration_request=good,
+        session=db_session,
+    )
+    assert run_record.stage == RunStage.AGENT4
+    assert run_record.status == RunStatus.SUCCEEDED
+
+
 def test_request_module_calibration_rejects_empty_observations(db_session):
     project_id, subproject_id = _make_ids(db_session)
     _run, module = _make_run_with_module(
@@ -819,6 +894,101 @@ def test_real_full_calibration_smoke_recovers_true_parameter_and_persists_proven
         # module-specific artifact, never the root's, was what Agent 4 calibrated against.
         assert payload["module_handoff_summary"]["reaction_count"] == 2
         assert payload["module_handoff_summary"]["parameter_count"] == 2
+    finally:
+        import shutil
+
+        run_dir = HARNESS_REPO_DIR / "artifacts" / "runs" / str(calib_run.id)
+        if run_dir.is_dir():
+            shutil.rmtree(run_dir)
+
+
+@pytest.mark.skipif(_HARNESS_UNAVAILABLE is not None, reason=str(_HARNESS_UNAVAILABLE))
+def test_real_units_smoke_accepts_equivalent_rejects_incompatible(db_session):
+    """The one required realistic integration test for the Structured Units and Dimensional-
+    Consistency Validation increment: a second observation of the *same* target species,
+    declaring a dimensionally *incompatible* unit, is rejected before any harness call ever
+    happens (no ``RunRecord``/subprocess, confirmed by this request never reaching
+    ``invoke_module_calibration``) -- while declaring a unit that is merely *written
+    differently* but dimensionally equivalent (``"M"`` vs ``"mM"``) is accepted, and the real
+    Agent2->Agent3->Agent4 calibration proceeds exactly as it would with no unit annotation at
+    all, recovering the identical true parameter value the companion non-units smoke test
+    (``test_real_full_calibration_smoke_recovers_true_parameter_and_persists_provenance``)
+    already established."""
+    project_id, subproject_id = _make_ids(db_session)
+    module = _two_module_split_run_with_dynamics(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+
+    time_points = [1.0, 2.0, 4.0, 6.0, 8.0, 12.0, 16.0, 20.0]
+    values = [(_K1 * _S1_FIXED / _TRUE_K2) * (1 - math.exp(-_TRUE_K2 * t)) for t in time_points]
+
+    def _calibration_request(*, second_observation_unit: str) -> dict:
+        return {
+            "request_id": f"real-units-smoke-{second_observation_unit}",
+            "targets": [
+                {
+                    "target_kind": "PARAMETER",
+                    "target_id": "k_reaction-2_protein-2",
+                    "bounds": {"lower": 0.001, "upper": 5.0},
+                }
+            ],
+            "observations": {
+                "observation_set_id": "modA-s2-real-units-smoke",
+                "observations": [
+                    {
+                        "observation_id": "obs-s2-primary",
+                        "target_species_id": "compound-S2::in::compartment-1",
+                        "kind": "TIME_SERIES",
+                        "partition": "TRAIN",
+                        "time_points": time_points,
+                        "values": values,
+                        "unit": "mM",
+                    },
+                    # A second, independent observation of the *identical* target species --
+                    # a real, legitimate scenario (a replicate measurement), used here purely
+                    # to exercise the cross-observation unit check: no boundary port exists
+                    # for this dynamic species at all, so the only metadata available to
+                    # compare against is another observation's own declared unit.
+                    {
+                        "observation_id": "obs-s2-replicate",
+                        "target_species_id": "compound-S2::in::compartment-1",
+                        "kind": "TIME_SERIES",
+                        "partition": "TRAIN",
+                        "time_points": time_points,
+                        "values": values,
+                        "unit": second_observation_unit,
+                    },
+                ],
+            },
+        }
+
+    # Reject half: "s" (time) is genuinely dimensionally incompatible with the primary
+    # observation's own "mM" (concentration) for the identical target species -- rejected
+    # before any RunRecord is even created, let alone any harness subprocess invoked.
+    with pytest.raises(ModuleCalibrationValidationError, match="dimensionally incompatible"):
+        module_calibration_orchestrator.request_module_calibration(
+            model_module_id=module.id,
+            subproject_id=subproject_id,
+            project_id=project_id,
+            calibration_request=_calibration_request(second_observation_unit="s"),
+            session=db_session,
+        )
+
+    # Accept half: "M" is written differently from the primary observation's own "mM", but is
+    # the identical physical dimension (concentration) -- accepted, and the real calibration
+    # proceeds and recovers the same true parameter value as with no unit annotation at all.
+    calib_run = module_calibration_orchestrator.request_module_calibration(
+        model_module_id=module.id,
+        subproject_id=subproject_id,
+        project_id=project_id,
+        calibration_request=_calibration_request(second_observation_unit="M"),
+        session=db_session,
+    )
+    try:
+        assert calib_run.status is RunStatus.SUCCEEDED, calib_run.error_summary
+        calibration = json.loads(calib_run.artifact_reference)["agent4_report"]["calibration"]
+        estimates = {p["target_id"]: p["fitted_value"] for p in calibration["parameter_estimates"]}
+        assert estimates["k_reaction-2_protein-2"] == pytest.approx(_TRUE_K2, rel=0.05)
     finally:
         import shutil
 

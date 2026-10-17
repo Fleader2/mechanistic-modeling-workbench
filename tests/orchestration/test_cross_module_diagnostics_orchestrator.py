@@ -19,7 +19,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.models.enums import ModuleBoundaryTreatmentType, RunStage, RunStatus
+from app.models.enums import ModuleBoundaryTreatmentType, ModuleExecutionKind, RunStage, RunStatus
 from app.orchestration import (
     cross_module_diagnostics_orchestrator,
     model_module_orchestrator,
@@ -246,6 +246,27 @@ def _make_calibration_run(db_session, module, *, target_id, fitted_value):
     )
 
 
+def _make_calibration_run_with_unit(db_session, module, *, target_id, fitted_value, unit):
+    """Identical to ``_make_calibration_run``, but also persists a real
+    ``ModuleExecutionSnapshot`` carrying a materialized parameter's own unit -- the metadata
+    ``_detect_parameter_conflicts``'s own unit check reads back (task instructions §3: "model
+    parameters where unit metadata exists")."""
+    from app.persistence.module_execution_snapshot import create_snapshot
+
+    run_record = _make_calibration_run(
+        db_session, module, target_id=target_id, fitted_value=fitted_value
+    )
+    create_snapshot(
+        model_module_id=module.id,
+        run_record_id=run_record.id,
+        execution_kind=ModuleExecutionKind.CALIBRATION,
+        module_artifact_hash="test-hash",
+        snapshot_payload={"parameters": [{"parameter_id": target_id, "unit": unit}]},
+        session=db_session,
+    )
+    return run_record
+
+
 def _make_validation_run(db_session, module, *, overall_status):
     run_record = create_run_record(
         subproject_id=make_subproject_id(db_session, project_id=make_project_id(db_session)),
@@ -384,10 +405,69 @@ def test_different_parameters_produce_no_false_positive(db_session):
     assert _findings_by_category(findings, "PARAMETER_ASSUMPTION_CONFLICT") == []
 
 
+def test_parameter_unit_incompatibility_is_detected(db_session):
+    """The same ``target_id``, fitted to the *same* value in both modules (no
+    ``PARAMETER_ASSUMPTION_CONFLICT``), but materialized with dimensionally incompatible
+    units -- a genuine unit conflict a bare numeric-value comparison alone would miss (task
+    instructions §3: "model parameters where unit metadata exists")."""
+    project_id, subproject_id = _make_ids(db_session)
+    run, modA, modB = _make_two_sibling_modules(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    _make_calibration_run_with_unit(
+        db_session, modA, target_id="k_shared", fitted_value=0.5, unit="per_sec"
+    )
+    _make_calibration_run_with_unit(
+        db_session, modB, target_id="k_shared", fitted_value=0.5, unit="mM"
+    )
+
+    cross_module_diagnostics_orchestrator.run_diagnostics(
+        hierarchy_run_record_id=run.id, session=db_session
+    )
+    findings = cross_module_diagnostics_orchestrator.get_current_findings(db_session, run.id)
+    assert _findings_by_category(findings, "PARAMETER_ASSUMPTION_CONFLICT") == []
+    unit_findings = _findings_by_category(findings, "UNIT_INCOMPATIBILITY")
+    assert len(unit_findings) == 1
+    assert unit_findings[0].severity.value == "ERROR"
+    evidence = cross_module_diagnostics_orchestrator.get_finding_evidence(
+        db_session, unit_findings[0].id
+    )
+    assert evidence["evidence"]["unit_comparison"]["status"] == "INCOMPATIBLE"
+    assert evidence["evidence"]["target_id"] == "k_shared"
+
+
 # --- incompatible / missing units -------------------------------------------------------------
 
 
-def test_incompatible_units_are_detected(db_session):
+def test_dimensionally_incompatible_units_are_detected_as_error(db_session):
+    """ "mM" (concentration) vs "s" (time) -- a genuine dimensional incompatibility, never
+    something a string-equality check alone could tell apart from merely-differently-spelled
+    equivalent units (task instructions §7)."""
+    project_id, subproject_id = _make_ids(db_session)
+    run, modA, modB = _make_two_sibling_modules(
+        db_session, project_id=project_id, subproject_id=subproject_id
+    )
+    _resolve_boundary(db_session, modA, species_id="Z", value="5", unit="mM")
+    _resolve_boundary(db_session, modB, species_id="Z", value="5", unit="s")
+
+    cross_module_diagnostics_orchestrator.run_diagnostics(
+        hierarchy_run_record_id=run.id, session=db_session
+    )
+    findings = cross_module_diagnostics_orchestrator.get_current_findings(db_session, run.id)
+    unit_findings = _findings_by_category(findings, "UNIT_INCOMPATIBILITY")
+    assert len(unit_findings) == 1
+    assert unit_findings[0].severity.value == "ERROR"
+    evidence = cross_module_diagnostics_orchestrator.get_finding_evidence(
+        db_session, unit_findings[0].id
+    )
+    assert evidence["evidence"]["unit_comparison"]["status"] == "INCOMPATIBLE"
+
+
+def test_convertible_but_differently_written_units_are_disclosed_as_info(db_session):
+    """ "mM" vs "mol/L" -- dimensionally equivalent (both concentration), but a different
+    normalized form and a non-trivial conversion factor -- disclosed, never silently converted
+    (task instructions §5), and never flagged as a conflict the way bare string equality would
+    (task instructions §7)."""
     project_id, subproject_id = _make_ids(db_session)
     run, modA, modB = _make_two_sibling_modules(
         db_session, project_id=project_id, subproject_id=subproject_id
@@ -401,7 +481,13 @@ def test_incompatible_units_are_detected(db_session):
     findings = cross_module_diagnostics_orchestrator.get_current_findings(db_session, run.id)
     unit_findings = _findings_by_category(findings, "UNIT_INCOMPATIBILITY")
     assert len(unit_findings) == 1
-    assert unit_findings[0].severity.value == "WARNING"
+    assert unit_findings[0].severity.value == "INFO"
+    evidence = cross_module_diagnostics_orchestrator.get_finding_evidence(
+        db_session, unit_findings[0].id
+    )
+    comparison = evidence["evidence"]["unit_comparison"]
+    assert comparison["status"] == "COMPATIBLE"
+    assert comparison["conversion_factor"] == pytest.approx(0.001)
 
 
 def test_missing_unit_on_one_side_is_detected(db_session):

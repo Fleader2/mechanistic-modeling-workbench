@@ -41,6 +41,7 @@ from app.models.module_execution_snapshot import ModuleExecutionSnapshot
 from app.models.project import Project
 from app.models.run_record import RunRecord
 from app.models.subproject import Subproject
+from app.models.unit_resolution import UnitResolution
 
 __all__ = [
     "Base",
@@ -71,4 +72,5 @@ __all__ = [
     "Project",
     "RunRecord",
     "Subproject",
+    "UnitResolution",
 ]

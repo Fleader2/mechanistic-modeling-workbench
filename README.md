@@ -130,6 +130,17 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
   is globally valid just because none was found. Immutable and versioned like
   `ModuleAggregate`; a finding's own review annotation is the one deliberately mutable field
   this Workbench adds anywhere. See `docs/13_cross_module_diagnostics.md`.
+* **Structured Units and Dimensional-Consistency Validation** (`app/units.py`, a project-owned
+  `pint` registry taught (never invented) the real rate-constant/count units Agent1/Agent2
+  already emit): replaces bare unit-string equality with real dimensional analysis --
+  `cross_module_diagnostics_orchestrator` now reports a genuine dimensional incompatibility as
+  `ERROR` and a merely differently-written equivalent unit (`"mM"` vs `"mmol/L"`) as a
+  disclosed `INFO`, never the other way around; `request_module_calibration`/`request_module
+  _validation` reject an observation whose own optional unit annotation is dimensionally
+  incompatible with a known boundary unit or another observation of the same species, before
+  any harness call. A new standalone `unit_resolution` cache table backs every resolution;
+  no existing column changed shape, and a legacy free-text/missing unit is disclosed, never
+  fabricated. See `docs/14_structured_units.md`.
 
 ## Explicitly out of scope (owned elsewhere)
 

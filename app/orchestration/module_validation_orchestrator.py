@@ -51,6 +51,7 @@ from app.persistence.run_record import (
     resolve_stage1_inputs,
     start_run,
 )
+from app.units import find_observation_unit_conflict
 
 
 class ModuleValidationValidationError(ValueError):
@@ -59,10 +60,19 @@ class ModuleValidationValidationError(ValueError):
     always rejected before any harness call is ever made (task instructions §2)."""
 
 
-def _validate_validation_request(validation_request: dict, module: ModelModule) -> None:
+def _validate_validation_request(
+    validation_request: dict, module: ModelModule, session: Session
+) -> None:
     """Reject an incomplete or scientifically unsupported validation request before it ever
     reaches the harness -- validated against this module's own durably-recorded membership
     (never a harness round-trip, never a fabricated id).
+
+    **Pre-flight dimensional check** (Structured Units and Dimensional-Consistency Validation
+    increment, task instructions §6): identical to ``module_calibration_orchestrator``'s own --
+    an observation's optional ``"unit"`` key is checked against the target species' own
+    already-resolved boundary-port unit (if any) and against every other observation's own
+    declared unit for the identical species, rejecting on a genuine dimensional incompatibility
+    before any harness call.
 
     Raises ``ModuleValidationValidationError``.
     """
@@ -98,6 +108,18 @@ def _validate_validation_request(validation_request: dict, module: ModelModule) 
                 f"validation observation {observation.get('observation_id')!r} has mismatched "
                 f"time_points/values lengths ({len(time_points)} vs {len(values)})"
             )
+
+    boundary_units_by_species = {
+        p.species_id: p.unit for p in list_boundary_ports_for_module(session, module.id) if p.unit
+    }
+    conflict = find_observation_unit_conflict(observations, boundary_units_by_species)
+    if conflict is not None:
+        other_unit = conflict.get("boundary_unit", conflict.get("other_observation_unit"))
+        raise ModuleValidationValidationError(
+            f"validation observation for species {conflict['species_id']!r} declares a unit "
+            f"{conflict['observation_unit']!r} dimensionally incompatible with {other_unit!r} "
+            "-- never automatically reconciled or converted"
+        )
 
     for candidate in validation_request.get("candidate_experiments") or ():
         target_id = candidate.get("target_id")
@@ -334,7 +356,7 @@ def request_module_validation(
     agent4_report = _resolve_calibration_report(
         session, calibration_run_record_id, model_module_id=module.id
     )
-    _validate_validation_request(validation_request, module)
+    _validate_validation_request(validation_request, module, session)
     if dataset_reference_ids:
         _check_datasets_are_independent_of_calibration(
             session,
