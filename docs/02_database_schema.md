@@ -230,6 +230,41 @@ PARTIAL
 EMPTY
 ```
 
+### CrossModuleDiagnosticCategory
+Added by the Cross-Module Consistency and Reconciliation Diagnostics increment (migration
+`0011_cross_module_diagnostics`) -- a 1:1 mapping onto that increment's own seven numbered
+detection requirements; every finding's own category already says which specific comparison
+produced it. See `docs/13_cross_module_diagnostics.md`.
+```text
+SHARED_BOUNDARY_SPECIES_CONFLICT
+UNIT_INCOMPATIBILITY
+PARAMETER_ASSUMPTION_CONFLICT
+PARENT_CHILD_BOUNDARY_INCONSISTENCY
+DATASET_CONTEXT_INCOMPATIBILITY
+CONFLICTING_CALIBRATION_OR_VALIDATION_OUTCOME
+INSUFFICIENT_EVIDENCE_FOR_COMPARISON
+```
+
+### DiagnosticSeverity
+No existing enum in this schema already carried this exact vocabulary (confirmed by
+inspection before adding it). `UNRESOLVED` means the comparison itself could not be
+concluded -- never silently skipped, and never treated as "no conflict."
+```text
+INFO
+WARNING
+ERROR
+UNRESOLVED
+```
+
+### DiagnosticReviewStatus
+Whether a human has reviewed one `cross_module_diagnostic` finding. Marking a finding
+reviewed is the one deliberately mutable operation this increment adds anywhere -- it never
+alters the finding's own detection content or any source record it describes.
+```text
+UNREVIEWED
+REVIEWED
+```
+
 ---
 
 # Table: project
@@ -785,6 +820,59 @@ children, which are always listed side by side, tagged by their own `module_id`.
 
 ---
 
+# Table: cross_module_diagnostic_run
+
+```text
+id                         UUID PRIMARY KEY
+hierarchy_run_record_id    UUID NOT NULL REFERENCES run_record(id) ON DELETE RESTRICT
+version                    INTEGER NOT NULL
+input_fingerprint          VARCHAR NOT NULL
+finding_count              INTEGER NOT NULL
+created_at                 TIMESTAMP WITH TIME ZONE NOT NULL
+```
+
+Added by the Cross-Module Consistency and Reconciliation Diagnostics increment (migration
+`0011_cross_module_diagnostics`): one immutable, versioned row per invocation of the
+consistency sweep over one hierarchy run's own already-persisted modules. `ON DELETE
+RESTRICT` from `run_record`, the identical precedent `model_module`/`module_execution_
+snapshot`/`module_aggregate` already use. Idempotent by `input_fingerprint`
+(`app.persistence.cross_module_diagnostic.compute_diagnostic_run_fingerprint`) against the
+latest existing run for the same hierarchy run -- an unchanged source state returns the
+existing run (and its own already-persisted findings) unchanged; a changed one creates a
+new, separately-numbered version. See `docs/13_cross_module_diagnostics.md`.
+
+---
+
+# Table: cross_module_diagnostic
+
+```text
+id                         UUID PRIMARY KEY
+diagnostic_run_id          UUID NOT NULL REFERENCES cross_module_diagnostic_run(id) ON DELETE CASCADE
+category                   cross_module_diagnostic_category NOT NULL
+severity                   diagnostic_severity NOT NULL
+message                    TEXT NOT NULL
+affected_model_module_ids  TEXT NOT NULL  -- opaque JSON array of model_module id strings
+evidence_payload           TEXT NOT NULL  -- opaque; full comparison detail + provenance
+review_status              diagnostic_review_status NOT NULL DEFAULT 'UNREVIEWED'
+review_note                TEXT
+reviewed_by                VARCHAR
+reviewed_at                TIMESTAMP WITH TIME ZONE
+created_at                 TIMESTAMP WITH TIME ZONE NOT NULL
+```
+
+One row per detected cross-module inconsistency. `ON DELETE CASCADE` from
+`cross_module_diagnostic_run` -- a finding has no independent meaning apart from the run
+batch that produced it, the identical "no independent existence apart from its parent"
+precedent `module_boundary_port` already uses. `category`/`severity`/`message`/
+`affected_model_module_ids`/`evidence_payload` are immutable once created -- no persistence
+function ever updates them. `review_status`/`review_note`/`reviewed_by`/`reviewed_at` are
+the one deliberately mutable field group this increment adds anywhere: marking a finding
+reviewed (`app.persistence.cross_module_diagnostic.mark_finding_reviewed`) only ever touches
+these four columns, never the finding's own detection content or any source record it
+describes. See `docs/13_cross_module_diagnostics.md`.
+
+---
+
 # Relationships
 
 ```text
@@ -832,8 +920,13 @@ project
    |               |                   this module's own roll-up, one per execution_kind)
    |               |
    |               +-- module_aggregate (ON DELETE RESTRICT; hierarchy_run_record_id with
-   |                           target_model_module_id IS NULL -- the hierarchy root's own
-   |                           roll-up, one per execution_kind)
+   |               |           target_model_module_id IS NULL -- the hierarchy root's own
+   |               |           roll-up, one per execution_kind)
+   |               |
+   |               +-- cross_module_diagnostic_run (ON DELETE RESTRICT; one versioned
+   |                           consistency-sweep batch per hierarchy run)
+   |                           |
+   |                           +-- cross_module_diagnostic (ON DELETE CASCADE)
    |
    +-- dataset_reference (subproject_id optional)
 
@@ -879,6 +972,8 @@ module_boundary_port.model_module_id
 module_execution_snapshot.model_module_id
 module_aggregate.target_model_module_id
 module_aggregate.hierarchy_run_record_id (composite with execution_kind)
+cross_module_diagnostic_run.hierarchy_run_record_id
+cross_module_diagnostic.diagnostic_run_id
 ```
 
 ---
@@ -908,6 +1003,7 @@ hierarchy_pending_review_item                  (cascades from hierarchy_checkpoi
 hierarchy_review_decision                      (cascades from hierarchy_pending_review_item)
 hierarchy_resume_attempt                       (cascades from hierarchy_checkpoint)
 module_boundary_port                           (cascades from model_module)
+cross_module_diagnostic                        (cascades from cross_module_diagnostic_run)
 ```
 
 `model.parent_model_id` restricts (a prior model version must not be
@@ -936,3 +1032,8 @@ Calibration with Immutable Execution-Condition Provenance increment).
 precedent, for the identical reason (Hierarchical Aggregation of Module-Level Agent3/4/5
 Results increment) -- a historical aggregate must never be silently orphaned or torn down by
 deleting the module or run it describes.
+
+`cross_module_diagnostic_run` restricts from `run_record`, the identical precedent, for the
+identical reason (Cross-Module Consistency and Reconciliation Diagnostics increment).
+`cross_module_diagnostic` cascades from `cross_module_diagnostic_run` -- unlike that table, a
+single finding has no independent meaning apart from the sweep batch that produced it.

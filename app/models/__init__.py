@@ -14,6 +14,7 @@ a copied identifier, never a constraint-enforced relationship.
 """
 
 from app.db.base import Base
+from app.models.cross_module_diagnostic import CrossModuleDiagnostic, CrossModuleDiagnosticRun
 from app.models.dataset_reference import DatasetReference
 from app.models.hierarchy_checkpoint import HierarchyCheckpoint
 from app.models.hierarchy_node import HierarchyNode
@@ -43,6 +44,8 @@ from app.models.subproject import Subproject
 
 __all__ = [
     "Base",
+    "CrossModuleDiagnostic",
+    "CrossModuleDiagnosticRun",
     "DatasetReference",
     "HierarchyCheckpoint",
     "HierarchyNode",

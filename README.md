@@ -120,6 +120,16 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
   averages incompatible children's own parameters, always listing them side by side tagged by
   `module_id`. Idempotent by content fingerprint; a new/changed contributing result creates a
   new version, the old one is never mutated. See `docs/12_hierarchical_aggregation.md`.
+* **Cross-Module Consistency and Reconciliation Diagnostics**
+  (`app/orchestration/cross_module_diagnostics_orchestrator.py`): detects scientifically
+  meaningful inconsistencies across sibling/parent-child modules -- shared boundary species
+  fixed at conflicting values, incompatible units, the same parameter calibrated to
+  different values, heterogeneous validation outcomes, unverifiable dataset contexts, and
+  comparisons that cannot be concluded due to missing evidence -- without ever averaging,
+  merging, or automatically reconciling a conflict, and without ever claiming the hierarchy
+  is globally valid just because none was found. Immutable and versioned like
+  `ModuleAggregate`; a finding's own review annotation is the one deliberately mutable field
+  this Workbench adds anywhere. See `docs/13_cross_module_diagnostics.md`.
 
 ## Explicitly out of scope (owned elsewhere)
 

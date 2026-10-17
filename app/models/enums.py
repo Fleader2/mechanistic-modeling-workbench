@@ -310,8 +310,67 @@ class ModuleAggregateCompleteness(StrEnum):
     EMPTY = "EMPTY"
 
 
+class CrossModuleDiagnosticCategory(StrEnum):
+    """What kind of cross-module inconsistency one ``CrossModuleDiagnostic`` finding reports
+    (Cross-Module Consistency and Reconciliation Diagnostics increment). A 1:1 mapping onto
+    task instructions §2's own seven numbered detection requirements -- never a
+    catch-all "something looks wrong" bucket, so each finding's own category already says
+    which specific comparison produced it.
+    """
+
+    SHARED_BOUNDARY_SPECIES_CONFLICT = "SHARED_BOUNDARY_SPECIES_CONFLICT"
+    UNIT_INCOMPATIBILITY = "UNIT_INCOMPATIBILITY"
+    PARAMETER_ASSUMPTION_CONFLICT = "PARAMETER_ASSUMPTION_CONFLICT"
+    PARENT_CHILD_BOUNDARY_INCONSISTENCY = "PARENT_CHILD_BOUNDARY_INCONSISTENCY"
+    DATASET_CONTEXT_INCOMPATIBILITY = "DATASET_CONTEXT_INCOMPATIBILITY"
+    CONFLICTING_CALIBRATION_OR_VALIDATION_OUTCOME = "CONFLICTING_CALIBRATION_OR_VALIDATION_OUTCOME"
+    INSUFFICIENT_EVIDENCE_FOR_COMPARISON = "INSUFFICIENT_EVIDENCE_FOR_COMPARISON"
+
+
+class DiagnosticSeverity(StrEnum):
+    """How serious one ``CrossModuleDiagnostic`` finding is (Cross-Module Consistency and
+    Reconciliation Diagnostics increment). No existing enum in this schema already carries
+    this exact four-value vocabulary (``ModuleAggregateCompleteness`` is a coverage statement,
+    a different concept) -- confirmed by inspection before adding a new one, per task
+    instructions §3's own "use existing conventions if equivalent enums exist."
+
+    ``INFO`` -- worth disclosing, not actionable on its own (e.g. two modules used different,
+    unverifiable dataset contexts).
+    ``WARNING`` -- a real heterogeneity or assumption mismatch that does not, by itself, make
+    either module's own result wrong.
+    ``ERROR`` -- a genuine logical conflict (the same species/parameter claimed to have two
+    different, incompatible values).
+    ``UNRESOLVED`` -- the comparison itself could not be concluded at all, because one side
+    lacks the evidence needed to compare safely -- never silently skipped, and never treated
+    as "no conflict" (task instructions §4: "never mark the hierarchy globally valid just
+    because no conflict was detected").
+    """
+
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    UNRESOLVED = "UNRESOLVED"
+
+
+class DiagnosticReviewStatus(StrEnum):
+    """Whether a human has reviewed one ``CrossModuleDiagnostic`` finding (Cross-Module
+    Consistency and Reconciliation Diagnostics increment).
+
+    Deliberately the one *mutable* field this increment adds anywhere: marking a finding
+    reviewed never alters the finding's own detection content (category/severity/message/
+    evidence) or any source record it describes -- see
+    ``app.models.cross_module_diagnostic``'s own module docstring.
+    """
+
+    UNREVIEWED = "UNREVIEWED"
+    REVIEWED = "REVIEWED"
+
+
 __all__ = [
     "ConfidenceClass",
+    "CrossModuleDiagnosticCategory",
+    "DiagnosticReviewStatus",
+    "DiagnosticSeverity",
     "HierarchyResumeAttemptStatus",
     "HierarchyReviewDecisionValue",
     "ModelBuildRequestGeneProteinRole",
