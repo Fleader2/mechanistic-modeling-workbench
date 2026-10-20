@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -96,4 +96,32 @@ def get_subproject(session: Session, subproject_id: UUID) -> Subproject | None:
     return session.get(Subproject, subproject_id)
 
 
-__all__ = ["get_subproject", "persist_subproject"]
+def list_subprojects(session: Session, project_id: UUID) -> list[Subproject]:
+    """Every ``Subproject`` belonging to one project, ordered by title. Read-only."""
+    return list(
+        session.execute(
+            select(Subproject).where(Subproject.project_id == project_id).order_by(Subproject.title)
+        )
+        .scalars()
+        .all()
+    )
+
+
+def count_subprojects_by_project(session: Session) -> dict[UUID, int]:
+    """Study count per project, in one aggregate query -- never per-project N+1.
+
+    A project with zero subprojects is simply absent from the returned
+    mapping; callers that need a default of ``0`` use ``dict.get(..., 0)``.
+    """
+    rows = session.execute(
+        select(Subproject.project_id, func.count(Subproject.id)).group_by(Subproject.project_id)
+    ).all()
+    return dict(rows)
+
+
+__all__ = [
+    "count_subprojects_by_project",
+    "get_subproject",
+    "list_subprojects",
+    "persist_subproject",
+]

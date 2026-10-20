@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from app.models.enums import ProjectType
-from app.persistence.project import get_project, persist_project
+from app.persistence.project import get_project, list_projects, persist_project
 from app.persistence.types import PersistenceAction
 
 pytestmark = pytest.mark.database
@@ -64,3 +64,36 @@ def test_regulatory_network_project_with_biological_context_copy(db_session):
     row = get_project(db_session, result.entity_id)
     assert row.agent1_organism_id == organism_id
     assert row.disease == "colorectal cancer"
+
+
+def test_list_projects_empty(db_session):
+    assert list_projects(db_session) == []
+
+
+def test_list_projects_returns_every_project_ordered_by_title(db_session):
+    persist_project(
+        stable_identifier=_stable_identifier(),
+        title="Zebrafish regeneration",
+        project_type=ProjectType.REGULATORY_NETWORK,
+        session=db_session,
+    )
+    persist_project(
+        stable_identifier=_stable_identifier(),
+        title="Acetate overflow in E. coli",
+        project_type=ProjectType.MICROBIAL_METABOLISM,
+        session=db_session,
+    )
+    persist_project(
+        stable_identifier=_stable_identifier(),
+        title="Mitotic checkpoint network",
+        project_type=ProjectType.REGULATORY_NETWORK,
+        session=db_session,
+    )
+
+    rows = list_projects(db_session)
+
+    assert [row.title for row in rows] == [
+        "Acetate overflow in E. coli",
+        "Mitotic checkpoint network",
+        "Zebrafish regeneration",
+    ]

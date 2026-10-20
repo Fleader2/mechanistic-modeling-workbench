@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from app.models.enums import SubprojectTaskType
-from app.persistence.subproject import get_subproject, persist_subproject
+from app.persistence.subproject import (
+    count_subprojects_by_project,
+    get_subproject,
+    list_subprojects,
+    persist_subproject,
+)
 from app.persistence.types import PersistenceAction
 from tests.persistence.conftest import make_project_id
 
@@ -60,3 +65,69 @@ def test_multiple_subprojects_per_project(db_session):
         session=db_session,
     )
     assert build.entity_id != calibrate.entity_id
+
+
+def test_list_subprojects_empty_for_project_with_none(db_session):
+    project_id = make_project_id(db_session)
+    assert list_subprojects(db_session, project_id) == []
+
+
+def test_list_subprojects_returns_only_this_projects_rows_ordered_by_title(db_session):
+    project_id = make_project_id(db_session)
+    other_project_id = make_project_id(db_session)
+    persist_subproject(
+        project_id=project_id,
+        title="zz last",
+        task_type=SubprojectTaskType.TEST_MODEL,
+        session=db_session,
+    )
+    persist_subproject(
+        project_id=project_id,
+        title="aa first",
+        task_type=SubprojectTaskType.BUILD_MODEL,
+        session=db_session,
+    )
+    persist_subproject(
+        project_id=other_project_id,
+        title="belongs to a different project",
+        task_type=SubprojectTaskType.BUILD_MODEL,
+        session=db_session,
+    )
+
+    rows = list_subprojects(db_session, project_id)
+
+    assert [row.title for row in rows] == ["aa first", "zz last"]
+
+
+def test_count_subprojects_by_project_empty(db_session):
+    assert count_subprojects_by_project(db_session) == {}
+
+
+def test_count_subprojects_by_project_aggregates_per_project(db_session):
+    project_with_two = make_project_id(db_session)
+    project_with_one = make_project_id(db_session)
+    project_with_zero = make_project_id(db_session)
+    persist_subproject(
+        project_id=project_with_two,
+        title="first",
+        task_type=SubprojectTaskType.BUILD_MODEL,
+        session=db_session,
+    )
+    persist_subproject(
+        project_id=project_with_two,
+        title="second",
+        task_type=SubprojectTaskType.CALIBRATE_MODEL,
+        session=db_session,
+    )
+    persist_subproject(
+        project_id=project_with_one,
+        title="only",
+        task_type=SubprojectTaskType.BUILD_MODEL,
+        session=db_session,
+    )
+
+    counts = count_subprojects_by_project(db_session)
+
+    assert counts[project_with_two] == 2
+    assert counts[project_with_one] == 1
+    assert project_with_zero not in counts

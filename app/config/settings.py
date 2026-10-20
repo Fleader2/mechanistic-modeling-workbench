@@ -15,6 +15,7 @@ from pydantic import PostgresDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 APPLICATION_NAME = "Mechanistic Modeling Workbench"
+API_V1_PREFIX = "/api/v1"
 
 LogLevel = Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
 
@@ -39,6 +40,15 @@ class Settings(BaseSettings):
     """Separate database used by the test suite. Tests refuse to run without it."""
 
     database_echo: bool = False
+
+    cors_allow_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    """Origins the HTTP API accepts cross-origin requests from.
+
+    Defaults to the Vite dev server's own default port, since the frontend
+    (``frontend/``) and this API are two separately-run processes during
+    local development, not one origin. Override via a JSON array in the
+    ``CORS_ALLOW_ORIGINS`` environment variable for any other deployment.
+    """
 
     @property
     def sqlalchemy_url(self) -> str:

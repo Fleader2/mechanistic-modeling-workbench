@@ -16,12 +16,14 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import Engine, event
 from sqlalchemy.orm import Session
 
 from app.config.settings import Settings, get_settings
-from app.db.session import get_engine, reset_engine
+from app.db.session import get_engine, get_session, reset_engine
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -170,3 +172,27 @@ def db_session(migrated_engine: Engine) -> Iterator[Session]:
         if transaction.is_active:
             transaction.rollback()
         connection.close()
+
+
+@pytest.fixture
+def app(db_session: Session) -> Iterator[FastAPI]:
+    """Application instance with its database dependency overridden to use
+    ``db_session``, so API-test seed data (flushed but never committed) is
+    visible to requests within the same test, and nothing persists past it.
+    """
+    from app.main import create_app
+
+    def _override_get_session() -> Iterator[Session]:
+        yield db_session
+
+    application = create_app()
+    application.dependency_overrides[get_session] = _override_get_session
+    yield application
+    application.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client(app: FastAPI) -> Iterator[TestClient]:
+    """HTTP client for API tests."""
+    with TestClient(app) as test_client:
+        yield test_client

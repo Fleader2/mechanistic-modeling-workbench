@@ -141,6 +141,16 @@ Workbench <-> Harness invocation/result contract and run lifecycle.
   any harness call. A new standalone `unit_resolution` cache table backs every resolution;
   no existing column changed shape, and a legacy free-text/missing unit is disclosed, never
   fabricated. See `docs/14_structured_units.md`.
+* **Read-Only Projects API and "01 — All Projects" screen** (`app/api/`, `app/schemas/`,
+  `frontend/`): the Workbench's first HTTP API -- `GET /api/v1/projects` (with an efficiently
+  aggregated per-project study count, never one query per project) and
+  `GET /api/v1/projects/{id}` -- and its first GUI screen, a minimal React + TypeScript app
+  implementing the Figma file's own stated entry point (node `46:112`). Read-only: project
+  creation and every other Figma section remain explicitly disabled, not silently dropped. A
+  Figma field with no backend counterpart (Investigator, Start date, Scope/condition, Knowledge
+  sources, a project-level Objective) renders an honest "Not captured" placeholder rather than a
+  fabricated value, and `created_at` is never shown as a project's "Start date." See
+  `docs/16_projects_api_first_increment.md`.
 
 ## Explicitly out of scope (owned elsewhere)
 
@@ -165,4 +175,16 @@ alembic upgrade head
 pytest
 ruff check .
 ruff format --check .
+
+# Run the HTTP API:
+uvicorn app.main:app --reload
+```
+
+### Frontend (`frontend/`)
+
+```bash
+cd frontend
+cp .env.example .env   # VITE_API_BASE_URL, defaults to http://localhost:8000
+npm install
+npm run dev
 ```

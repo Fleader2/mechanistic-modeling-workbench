@@ -114,4 +114,15 @@ def get_project(session: Session, project_id: UUID) -> Project | None:
     return session.get(Project, project_id)
 
 
-__all__ = ["get_project", "persist_project"]
+def list_projects(session: Session) -> list[Project]:
+    """Every ``Project`` row, ordered by title for a stable, predictable listing.
+
+    Read-only. Does not include a study count -- see
+    ``app.persistence.subproject.count_subprojects_by_project`` for that,
+    kept separate so a caller who does not need counts never pays for the
+    extra aggregate query.
+    """
+    return list(session.execute(select(Project).order_by(Project.title)).scalars().all())
+
+
+__all__ = ["get_project", "list_projects", "persist_project"]
