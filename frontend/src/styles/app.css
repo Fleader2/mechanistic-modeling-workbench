@@ -487,3 +487,119 @@ h1 {
 .mode-option input {
   margin-top: 4px;
 }
+
+.module-sets-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 8px;
+}
+
+.module-sets-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding: 12px 10px;
+  background: var(--color-bg-page);
+}
+
+.module-sets-table td {
+  padding: 13px 10px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.module-sets-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.module-hierarchy-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 8px;
+}
+
+.module-hierarchy-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding: 12px 10px;
+  background: var(--color-bg-page);
+}
+
+.module-hierarchy-table td {
+  padding: 10px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.module-hierarchy-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.module-hierarchy-orphan-note {
+  font-size: 11px;
+}
+
+.module-hierarchy-toggle {
+  margin-bottom: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.module-hierarchy-ports-cell {
+  background: var(--color-bg-page);
+}
+
+.boundary-ports-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 4px 0;
+}
+
+.boundary-ports-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding: 8px;
+}
+
+.boundary-ports-table td {
+  padding: 8px;
+  font-size: 12px;
+  background: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.module-set-save-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.module-set-save-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  max-width: 420px;
+}
+
+.module-set-save-field input,
+.module-set-save-field select {
+  font-size: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-primary);
+  font-family: inherit;
+}

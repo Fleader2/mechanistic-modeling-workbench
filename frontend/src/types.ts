@@ -119,3 +119,103 @@ export interface ModelLineage {
   children: ModelListItem[];
   children_out_of_scope_count: number;
 }
+
+// --- Module sets (docs/20_module_set_domain_contract.md, docs/21_module_set_first_increment.md) ---
+
+export type ModuleSetOriginMethod = "AUTOMATED" | "MANUAL" | "MIXED_EDITED";
+export type ModuleSetDraftStatus = "OPEN" | "DISCARDED" | "SAVED";
+export type ModelModuleExecutionStatus = "VIEW_ONLY" | "REQUIRES_BOUNDARY_REVIEW" | "SIMULATION_READY";
+export type ModulePortDirection = "INPUT" | "OUTPUT" | "INPUT_OUTPUT";
+export type ModuleBoundaryTreatmentType =
+  | "EXTERNALLY_CONTROLLED"
+  | "PRESCRIBED_INPUT"
+  | "DYNAMIC_COUPLING"
+  | "UNRESOLVED";
+export type ModuleBoundaryResolutionStatus = "PENDING_REVIEW" | "RESOLVED";
+
+// Mirrors app/schemas/module_set.py::HierarchicalRunSummary -- the "pick a
+// run to draft a module set from" list.
+export interface HierarchicalRunSummary {
+  id: string;
+  model_id: string;
+  created_at: string;
+  module_count: number;
+}
+
+// Mirrors app/schemas/module_set.py::ModuleSetMemberItem. No `name` field --
+// ModelModule has none today, and this screen never invents one (see
+// docs/21). Hierarchy is derived client-side from parent_model_module_id.
+export interface ModuleSetMemberItem {
+  id: string;
+  model_module_id: string;
+  module_id: string;
+  depth: number;
+  parent_model_module_id: string | null;
+  execution_status: ModelModuleExecutionStatus;
+}
+
+// Mirrors app/schemas/module_set.py::BoundaryPortItem -- the structural
+// fact (species_id/direction) and the execution-specific decision
+// (treatment_type/initial_value/unit/decided_by/decided_at) both present,
+// never conflated.
+export interface BoundaryPortItem {
+  port_id: string;
+  species_id: string;
+  direction: ModulePortDirection;
+  treatment_type: ModuleBoundaryTreatmentType;
+  resolution_status: ModuleBoundaryResolutionStatus;
+  initial_value: string | null;
+  unit: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+}
+
+export interface ModuleSetDraftDetail {
+  id: string;
+  subproject_id: string;
+  model_id: string;
+  module_set_id: string | null;
+  base_run_record_id: string | null;
+  base_version_id: string | null;
+  origin_method: ModuleSetOriginMethod;
+  status: ModuleSetDraftStatus;
+  resulting_version_id: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  members: ModuleSetMemberItem[];
+}
+
+export interface ModuleSetVersionDetail {
+  id: string;
+  module_set_id: string;
+  module_set_stable_identifier: string;
+  module_set_name: string;
+  version: number;
+  model_id: string;
+  origin_method: ModuleSetOriginMethod;
+  generation_run_record_id: string | null;
+  base_version_id: string | null;
+  version_note: string | null;
+  saved_at: string;
+  saved_by: string | null;
+  members: ModuleSetMemberItem[];
+}
+
+export interface ModuleSetSummary {
+  id: string;
+  stable_identifier: string;
+  name: string;
+  created_at: string;
+  latest_version: number | null;
+  latest_version_saved_at: string | null;
+  latest_version_origin_method: ModuleSetOriginMethod | null;
+}
+
+export interface SaveModuleSetDraftRequest {
+  mode: "new_set" | "new_version";
+  set_name?: string;
+  existing_set_id?: string;
+  version_note?: string;
+  saved_by?: string;
+}

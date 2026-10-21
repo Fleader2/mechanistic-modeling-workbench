@@ -1,9 +1,15 @@
 import type {
+  BoundaryPortItem,
+  HierarchicalRunSummary,
   ModelDetail,
   ModelLineage,
   ModelListItem,
+  ModuleSetDraftDetail,
+  ModuleSetSummary,
+  ModuleSetVersionDetail,
   ProjectDetail,
   ProjectListItem,
+  SaveModuleSetDraftRequest,
   SubprojectDetail,
   SubprojectListItem,
 } from "../types";
@@ -23,19 +29,33 @@ interface ApiErrorBody {
 export class ApiRequestError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly context: Record<string, unknown> | null;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    context: Record<string, unknown> | null = null,
+  ) {
     super(message);
     this.name = "ApiRequestError";
     this.status = status;
     this.code = code;
+    this.context = context;
   }
 }
 
-async function request<T>(path: string): Promise<T> {
+async function request<T>(
+  path: string,
+  init?: { method?: "GET" | "POST"; body?: unknown },
+): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`);
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method: init?.method ?? "GET",
+      headers: init?.body !== undefined ? { "Content-Type": "application/json" } : undefined,
+      body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+    });
   } catch {
     throw new ApiRequestError(0, "NETWORK_ERROR", "Could not reach the Workbench API.");
   }
@@ -46,6 +66,7 @@ async function request<T>(path: string): Promise<T> {
       response.status,
       body?.detail?.code ?? "HTTP_ERROR",
       body?.detail?.message ?? `Request failed with status ${response.status}.`,
+      (body?.detail?.context as Record<string, unknown> | undefined) ?? null,
     );
   }
 
@@ -99,4 +120,107 @@ export function getModelLineage(
   modelId: string,
 ): Promise<ModelLineage> {
   return request<ModelLineage>(`${modelPath(projectId, studyId, modelId)}/lineage`);
+}
+
+function studyPath(projectId: string, studyId: string): string {
+  return `/api/v1/projects/${encodeURIComponent(projectId)}/subprojects/${encodeURIComponent(
+    studyId,
+  )}`;
+}
+
+export function listDraftableHierarchicalRuns(
+  projectId: string,
+  studyId: string,
+): Promise<HierarchicalRunSummary[]> {
+  return request<HierarchicalRunSummary[]>(`${studyPath(projectId, studyId)}/hierarchical-runs`);
+}
+
+export function createModuleSetDraft(
+  projectId: string,
+  studyId: string,
+  runRecordId: string,
+): Promise<ModuleSetDraftDetail> {
+  return request<ModuleSetDraftDetail>(`${studyPath(projectId, studyId)}/module-set-drafts`, {
+    method: "POST",
+    body: { run_record_id: runRecordId },
+  });
+}
+
+export function getModuleSetDraft(
+  projectId: string,
+  studyId: string,
+  draftId: string,
+): Promise<ModuleSetDraftDetail> {
+  return request<ModuleSetDraftDetail>(
+    `${studyPath(projectId, studyId)}/module-set-drafts/${encodeURIComponent(draftId)}`,
+  );
+}
+
+export function discardModuleSetDraft(
+  projectId: string,
+  studyId: string,
+  draftId: string,
+): Promise<ModuleSetDraftDetail> {
+  return request<ModuleSetDraftDetail>(
+    `${studyPath(projectId, studyId)}/module-set-drafts/${encodeURIComponent(draftId)}/discard`,
+    { method: "POST" },
+  );
+}
+
+export function saveModuleSetDraft(
+  projectId: string,
+  studyId: string,
+  draftId: string,
+  request_body: SaveModuleSetDraftRequest,
+): Promise<ModuleSetVersionDetail> {
+  return request<ModuleSetVersionDetail>(
+    `${studyPath(projectId, studyId)}/module-set-drafts/${encodeURIComponent(draftId)}/save`,
+    { method: "POST", body: request_body },
+  );
+}
+
+export function getDraftMemberBoundaryPorts(
+  projectId: string,
+  studyId: string,
+  draftId: string,
+  memberId: string,
+): Promise<BoundaryPortItem[]> {
+  return request<BoundaryPortItem[]>(
+    `${studyPath(projectId, studyId)}/module-set-drafts/${encodeURIComponent(
+      draftId,
+    )}/members/${encodeURIComponent(memberId)}/boundary-ports`,
+  );
+}
+
+export function listModuleSets(projectId: string, studyId: string): Promise<ModuleSetSummary[]> {
+  return request<ModuleSetSummary[]>(`${studyPath(projectId, studyId)}/module-sets`);
+}
+
+export function getModuleSetVersion(
+  projectId: string,
+  studyId: string,
+  moduleSetId: string,
+  version: string,
+): Promise<ModuleSetVersionDetail> {
+  return request<ModuleSetVersionDetail>(
+    `${studyPath(projectId, studyId)}/module-sets/${encodeURIComponent(
+      moduleSetId,
+    )}/versions/${encodeURIComponent(version)}`,
+  );
+}
+
+export function getVersionMemberBoundaryPorts(
+  projectId: string,
+  studyId: string,
+  moduleSetId: string,
+  version: string,
+  memberId: string,
+): Promise<BoundaryPortItem[]> {
+  return request<BoundaryPortItem[]>(
+    `${studyPath(projectId, studyId)}/module-sets/${encodeURIComponent(
+      moduleSetId,
+    )}/versions/${encodeURIComponent(version)}/members/${encodeURIComponent(
+      memberId,
+    )}/boundary-ports`,
+  );
 }

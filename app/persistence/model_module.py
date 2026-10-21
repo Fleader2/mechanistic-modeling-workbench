@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.hierarchy_node import HierarchyNode
@@ -114,6 +114,22 @@ def list_model_modules_for_run(session: Session, run_record_id: UUID) -> list[Mo
     return list(session.scalars(stmt))
 
 
+def count_model_modules_by_run(session: Session) -> dict[UUID, int]:
+    """Materialized-module count per hierarchical run, in one aggregate query -- never one query
+    per run (Module-Set Domain Model increment, the "N module(s) available to draft" count on a
+    study's own list of draftable runs).
+
+    A run with zero materialized modules is simply absent from the returned mapping; callers that
+    need a default of ``0`` use ``dict.get(..., 0)``.
+    """
+    rows = session.execute(
+        select(ModelModule.run_record_id, func.count(ModelModule.id)).group_by(
+            ModelModule.run_record_id
+        )
+    ).all()
+    return dict(rows)
+
+
 def build_attach_payload(model_module: ModelModule) -> dict:
     """Decode one ``ModelModule.attach_payload`` back into a plain dict -- the one, documented
     place this opaque column is ever parsed, and only to pass it straight back to the harness's
@@ -139,6 +155,7 @@ def known_component_ids_by_type(model_module: ModelModule) -> dict[str, set[str]
 
 __all__ = [
     "build_attach_payload",
+    "count_model_modules_by_run",
     "get_model_module",
     "known_component_ids_by_type",
     "list_model_modules_for_run",

@@ -3,13 +3,24 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from app.models.enums import RunStage, RunStatus
 from app.persistence.model_build_request import persist_model_build_request
-from app.persistence.run_record import complete_run, create_run_record, get_run_record, start_run
-from tests.persistence.conftest import make_subproject_id
+from app.persistence.run_record import (
+    complete_run,
+    create_run_record,
+    get_run_record,
+    list_hierarchical_runs_for_subproject,
+    start_run,
+)
+from tests.persistence.conftest import (
+    make_model_id,
+    make_subproject_id,
+    make_succeeded_hierarchical_run,
+)
 
 pytestmark = pytest.mark.database
 
@@ -112,3 +123,49 @@ def test_run_record_persists_structured_warnings(db_session):
         warnings=json.dumps(warnings),
     )
     assert json.loads(completed.warnings) == warnings
+
+
+def test_list_hierarchical_runs_for_subproject_excludes_runs_with_no_model(db_session):
+    subproject_id = make_subproject_id(db_session)
+    make_succeeded_hierarchical_run(db_session, subproject_id=subproject_id, include_model=False)
+
+    assert list_hierarchical_runs_for_subproject(db_session, subproject_id) == []
+
+
+def test_list_hierarchical_runs_for_subproject_excludes_non_harness_and_unsucceeded_runs(
+    db_session,
+):
+    subproject_id = make_subproject_id(db_session)
+    model_id = make_model_id(db_session, subproject_id=subproject_id)
+    # A non-hierarchical, Agent2 run -- never listed here regardless of status.
+    agent2_run = create_run_record(
+        subproject_id=subproject_id, stage=RunStage.AGENT2, session=db_session, model_id=model_id
+    )
+    start_run(run_record_id=agent2_run.id, session=db_session)
+    complete_run(run_record_id=agent2_run.id, status=RunStatus.SUCCEEDED, session=db_session)
+    # A hierarchical run that never finished.
+    running_run = create_run_record(
+        subproject_id=subproject_id, stage=RunStage.HARNESS, session=db_session, model_id=model_id
+    )
+    start_run(run_record_id=running_run.id, session=db_session)
+
+    assert list_hierarchical_runs_for_subproject(db_session, subproject_id) == []
+
+
+def test_list_hierarchical_runs_for_subproject_returns_only_this_studys_own_runs_newest_first(
+    db_session,
+):
+    subproject_id = make_subproject_id(db_session)
+    other_subproject_id = make_subproject_id(db_session)
+    make_succeeded_hierarchical_run(db_session, subproject_id=other_subproject_id)
+    older = make_succeeded_hierarchical_run(db_session, subproject_id=subproject_id)
+    newer = make_succeeded_hierarchical_run(db_session, subproject_id=subproject_id)
+    # Postgres's own `now()` returns the *transaction's* start time, identical for every
+    # statement in this one test's own transaction -- backdate explicitly so the ordering
+    # assertion below is deterministic rather than relying on same-timestamp tie-breaking.
+    older.created_at = datetime.now(UTC) - timedelta(minutes=5)
+    db_session.flush()
+
+    runs = list_hierarchical_runs_for_subproject(db_session, subproject_id)
+
+    assert [r.id for r in runs] == [newer.id, older.id]

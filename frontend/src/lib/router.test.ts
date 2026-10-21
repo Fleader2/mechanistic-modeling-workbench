@@ -101,3 +101,61 @@ test("a nested, unsupported path under a model falls back to the projects screen
     screen: "projects",
   });
 });
+
+test("/projects/<id>/studies/<id2>/module-sets resolves to the module-sets list screen", () => {
+  assert.deepEqual(parseRoute("/projects/abc-123/studies/xyz-789/module-sets"), {
+    screen: "module-sets",
+    projectId: "abc-123",
+    studyId: "xyz-789",
+  });
+});
+
+test("a trailing slash on a module-sets path is tolerated", () => {
+  assert.deepEqual(parseRoute("/projects/abc-123/studies/xyz-789/module-sets/"), {
+    screen: "module-sets",
+    projectId: "abc-123",
+    studyId: "xyz-789",
+  });
+});
+
+test("/projects/<id>/studies/<id2>/module-set-drafts/<id3> resolves to the draft screen", () => {
+  assert.deepEqual(parseRoute("/projects/abc-123/studies/xyz-789/module-set-drafts/draft-1"), {
+    screen: "module-set-draft",
+    projectId: "abc-123",
+    studyId: "xyz-789",
+    draftId: "draft-1",
+  });
+});
+
+test("/projects/<id>/studies/<id2>/module-sets/<id3>/versions/<n> resolves to the version screen", () => {
+  assert.deepEqual(
+    parseRoute("/projects/abc-123/studies/xyz-789/module-sets/MS-001/versions/2"),
+    {
+      screen: "module-set-version",
+      projectId: "abc-123",
+      studyId: "xyz-789",
+      moduleSetId: "MS-001",
+      version: "2",
+    },
+  );
+});
+
+test("URL-encoded ids in a module-set-version path are all decoded", () => {
+  assert.deepEqual(
+    parseRoute("/projects/abc%20123/studies/xyz%20789/module-sets/ms%20001/versions/2"),
+    {
+      screen: "module-set-version",
+      projectId: "abc 123",
+      studyId: "xyz 789",
+      moduleSetId: "ms 001",
+      version: "2",
+    },
+  );
+});
+
+test("a nested, unsupported path under a module-set version falls back to the projects screen", () => {
+  assert.deepEqual(
+    parseRoute("/projects/abc-123/studies/xyz-789/module-sets/MS-001/versions/2/compare"),
+    { screen: "projects" },
+  );
+});

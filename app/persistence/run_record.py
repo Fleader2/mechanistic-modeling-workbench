@@ -12,6 +12,7 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.enums import RunStage, RunStatus
@@ -181,10 +182,35 @@ def resolve_stage1_inputs(run_record: RunRecord) -> tuple[str | None, str | None
     return organism_id, synthetic_source
 
 
+def list_hierarchical_runs_for_subproject(session: Session, subproject_id: UUID) -> list[RunRecord]:
+    """Every ``SUCCEEDED`` hierarchical-search run (``stage=HARNESS``) for one Modeling Study
+    that has a real, associated ``Model`` row (``model_id IS NOT NULL``), ordered newest first.
+
+    Module-Set Domain Model increment (``docs/20_module_set_domain_contract.md``): this is the
+    one query backing "which runs can I draft a module set from" -- a run with no ``model_id``
+    is excluded here, not merely at draft-creation time, since a module-set version must pin
+    exactly one model version and there would be none to pin (`docs/20` §2.1). ``RUNNING``/
+    ``REQUIRES_USER_REVIEW``/``FAILED`` runs are excluded too: only a run that actually finished
+    successfully has any materialized ``ModelModule`` rows worth drafting from. Read-only.
+    """
+    stmt = (
+        select(RunRecord)
+        .where(
+            RunRecord.subproject_id == subproject_id,
+            RunRecord.stage == RunStage.HARNESS,
+            RunRecord.status == RunStatus.SUCCEEDED,
+            RunRecord.model_id.is_not(None),
+        )
+        .order_by(RunRecord.created_at.desc())
+    )
+    return list(session.scalars(stmt))
+
+
 __all__ = [
     "complete_run",
     "create_run_record",
     "get_run_record",
+    "list_hierarchical_runs_for_subproject",
     "pause_run_for_review",
     "resolve_stage1_inputs",
     "resume_run",

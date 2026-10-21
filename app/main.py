@@ -17,8 +17,8 @@ from app.config.settings import API_V1_PREFIX, APPLICATION_NAME, get_settings
 from app.schemas.common import ErrorResponse
 
 DESCRIPTION = (
-    "Read-only HTTP API over the Workbench's persistent project/workflow "
-    "layer. Owns no scientific logic -- see docs/01_workbench_architecture.md."
+    "HTTP API over the Workbench's persistent project/workflow layer. Owns "
+    "no scientific logic -- see docs/01_workbench_architecture.md."
 )
 
 
@@ -39,7 +39,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allow_origins,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 

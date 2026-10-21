@@ -38,6 +38,13 @@ from app.models.modeling_decision import ModelingDecision, ModelingDecisionOptio
 from app.models.module_aggregate import ModuleAggregate
 from app.models.module_boundary_port import ModuleBoundaryPort
 from app.models.module_execution_snapshot import ModuleExecutionSnapshot
+from app.models.module_set import (
+    ModuleSet,
+    ModuleSetDraft,
+    ModuleSetDraftMember,
+    ModuleSetMember,
+    ModuleSetVersion,
+)
 from app.models.project import Project
 from app.models.run_record import RunRecord
 from app.models.subproject import Subproject
@@ -69,6 +76,11 @@ __all__ = [
     "ModuleAggregate",
     "ModuleBoundaryPort",
     "ModuleExecutionSnapshot",
+    "ModuleSet",
+    "ModuleSetDraft",
+    "ModuleSetDraftMember",
+    "ModuleSetMember",
+    "ModuleSetVersion",
     "Project",
     "RunRecord",
     "Subproject",

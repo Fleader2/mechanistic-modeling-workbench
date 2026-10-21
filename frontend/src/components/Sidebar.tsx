@@ -15,7 +15,7 @@ interface SidebarProps {
   study: SubprojectDetail | null;
 }
 
-const STUDY_SCOPED_DISABLED_ITEMS = ["All models", "All datasets", "All modules", "Runs & Results"];
+const STUDY_SCOPED_DISABLED_ITEMS = ["All datasets", "Runs & Results"];
 
 /** The persistent left sidebar ("Context navigation" in Figma). On the "01
  * — All Projects" screen it shows only "All Projects"; once a project is
@@ -24,30 +24,39 @@ const STUDY_SCOPED_DISABLED_ITEMS = ["All models", "All datasets", "All modules"
  * screen -- disabled, never silently dropped); once a Modeling Study is
  * open ("03 — Modeling Study", node 46:314) it instead shows "Current
  * Project" (a real link back) and "Study overview" (active, this screen),
- * plus Figma's own "All models" / "All datasets" / "All modules" /
- * "Runs & Results" nav items -- none of those screens exist yet, so each is
- * disabled, never silently dropped, matching "Modeling Studies"'s own
- * precedent.
+ * plus Figma's own "All models" / "All datasets" / "Runs & Results" nav
+ * items -- none of those screens exist yet, so each is disabled, never
+ * silently dropped, matching "Modeling Studies"'s own precedent.
  *
- * On a model's own overview ("05 — Model Overview", node 46:564), "Study
- * overview" becomes a real link back (not active -- there is no model-list
- * screen between it and this page) and the same four items stay disabled.
- * Figma's own prototype instead highlights "All models" as the active
- * section for a model page -- a deliberate deviation here, since that
- * presumes the "All models" list screen exists as a real navigational
- * step above the model, which this increment does not build; marking an
- * unbuilt, disabled destination "active" would be confusing, not helpful.
- * See docs/19_model_overview_increment.md.
+ * "All modules" is the one item this increment finally makes real (the
+ * Module-Set first increment, `docs/21_module_set_first_increment.md`) --
+ * it links to the "06 — All Modules" catalog and is marked active for its
+ * whole subtree (the catalog itself, a draft, or a reopened version).
  *
- * All three detail routes show the open project's own mode.
+ * On a model's own overview ("05 — Model Overview", node 46:564) or any
+ * module-set screen, "Study overview" becomes a real link back (not active
+ * -- there is no model-list screen between it and this page) and the
+ * remaining three items stay disabled. Figma's own prototype instead
+ * highlights "All models" as the active section for a model page -- a
+ * deliberate deviation here, since that presumes the "All models" list
+ * screen exists as a real navigational step above the model, which this
+ * increment does not build; marking an unbuilt, disabled destination
+ * "active" would be confusing, not helpful. See
+ * docs/19_model_overview_increment.md.
+ *
+ * Every study-scoped route shows the open project's own mode.
  */
 export function Sidebar({ route, project, study }: SidebarProps) {
   const onProjectDetail = route.screen === "project-detail";
   const onStudyDetail = route.screen === "study-detail";
-  const onModelDetail = route.screen === "model-detail";
-  const studyScoped = onStudyDetail || onModelDetail;
+  const onModuleSetsSection =
+    route.screen === "module-sets" ||
+    route.screen === "module-set-draft" ||
+    route.screen === "module-set-version";
+  const studyScoped =
+    onStudyDetail || route.screen === "model-detail" || onModuleSetsSection;
   const projectId = studyScoped ? route.projectId : null;
-  const studyId = onModelDetail ? route.studyId : null;
+  const studyId = studyScoped ? route.studyId : null;
 
   return (
     <nav className="app-sidebar" aria-label="Workbench navigation">
@@ -96,6 +105,25 @@ export function Sidebar({ route, project, study }: SidebarProps) {
           ) : (
             <RouterLink to={`/projects/${projectId}/studies/${studyId}`} className="sidebar-nav-item">
               Study overview
+            </RouterLink>
+          )}
+          <span
+            className="sidebar-nav-item disabled"
+            aria-disabled="true"
+            title="Not available in this increment"
+          >
+            All models
+          </span>
+          {onModuleSetsSection ? (
+            <span className="sidebar-nav-item active" aria-current="page">
+              All modules
+            </span>
+          ) : (
+            <RouterLink
+              to={`/projects/${projectId}/studies/${studyId}/module-sets`}
+              className="sidebar-nav-item"
+            >
+              All modules
             </RouterLink>
           )}
           {STUDY_SCOPED_DISABLED_ITEMS.map((label) => (

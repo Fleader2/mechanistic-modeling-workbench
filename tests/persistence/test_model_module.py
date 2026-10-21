@@ -10,6 +10,7 @@ from app.models.enums import RunStage
 from app.persistence.hierarchy_node import create_hierarchy_nodes
 from app.persistence.model_module import (
     build_attach_payload,
+    count_model_modules_by_run,
     get_model_module,
     list_model_modules_for_run,
     materialize_accepted_modules,
@@ -305,3 +306,26 @@ def test_get_model_module_returns_none_when_absent(db_session):
     import uuid
 
     assert get_model_module(db_session, uuid.uuid4()) is None
+
+
+def test_count_model_modules_by_run_empty(db_session):
+    assert count_model_modules_by_run(db_session) == {}
+
+
+def test_count_model_modules_by_run_aggregates_per_run(db_session):
+    run_with_two = _make_run(db_session)
+    create_hierarchy_nodes(
+        run_record_id=run_with_two.id,
+        nodes=[_root_node(), _modA_node(), _modB_node()],
+        session=db_session,
+    )
+    materialize_accepted_modules(run_record_id=run_with_two.id, session=db_session)
+
+    run_with_zero = _make_run(db_session)
+    create_hierarchy_nodes(run_record_id=run_with_zero.id, nodes=[_root_node()], session=db_session)
+    materialize_accepted_modules(run_record_id=run_with_zero.id, session=db_session)
+
+    counts = count_model_modules_by_run(db_session)
+
+    assert counts[run_with_two.id] == 2
+    assert run_with_zero.id not in counts

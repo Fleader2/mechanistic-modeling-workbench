@@ -5,17 +5,21 @@ import { ProjectsListScreen } from "./components/ProjectsListScreen";
 import { ProjectDetailScreen } from "./components/ProjectDetailScreen";
 import { StudyDetailScreen } from "./components/StudyDetailScreen";
 import { ModelOverviewScreen } from "./components/ModelOverviewScreen";
+import { ModuleSetsListScreen } from "./components/ModuleSetsListScreen";
+import { ModuleSetDraftScreen } from "./components/ModuleSetDraftScreen";
+import { ModuleSetVersionScreen } from "./components/ModuleSetVersionScreen";
 import { Sidebar } from "./components/Sidebar";
 
 /** App shell: persistent header + left sidebar, matching the Figma file's
  * chrome. Routes between "01 — All Projects," "02 — Current Project,"
- * "03 — Modeling Study," and "05 — Model Overview" (see src/lib/router.ts)
- * -- every other section of the Figma file remains out of scope. */
+ * "03 — Modeling Study," "05 — Model Overview," and the module-set
+ * draft/save/catalog screens (see src/lib/router.ts) -- every other
+ * section of the Figma file remains out of scope. */
 export function App() {
   const route = useRoute();
-  // Lifted out of ProjectDetailScreen/StudyDetailScreen/ModelOverviewScreen
-  // so the sidebar's "PROJECT MODE" and "Current study" sections (siblings,
-  // not descendants, of any of those screens) can show them.
+  // Lifted out of every detail screen so the sidebar's "PROJECT MODE" and
+  // "Current study" sections (siblings, not descendants, of any of them)
+  // can show them.
   const [sidebarProject, setSidebarProject] = useState<ProjectDetail | null>(null);
   const [sidebarStudy, setSidebarStudy] = useState<SubprojectDetail | null>(null);
   const handleProjectChange = useCallback((project: ProjectDetail | null) => {
@@ -24,9 +28,16 @@ export function App() {
   const handleStudyChange = useCallback((study: SubprojectDetail | null) => {
     setSidebarStudy(study);
   }, []);
-  const showProjectMode =
-    route.screen === "project-detail" || route.screen === "study-detail" || route.screen === "model-detail";
-  const showStudyScope = route.screen === "study-detail" || route.screen === "model-detail";
+  const studyScopedScreens: Array<typeof route.screen> = [
+    "project-detail",
+    "study-detail",
+    "model-detail",
+    "module-sets",
+    "module-set-draft",
+    "module-set-version",
+  ];
+  const showProjectMode = studyScopedScreens.includes(route.screen);
+  const showStudyScope = route.screen !== "projects" && route.screen !== "project-detail";
 
   return (
     <div className="app-shell">
@@ -58,6 +69,33 @@ export function App() {
               projectId={route.projectId}
               studyId={route.studyId}
               modelId={route.modelId}
+              onProjectChange={handleProjectChange}
+              onStudyChange={handleStudyChange}
+            />
+          )}
+          {route.screen === "module-sets" && (
+            <ModuleSetsListScreen
+              projectId={route.projectId}
+              studyId={route.studyId}
+              onProjectChange={handleProjectChange}
+              onStudyChange={handleStudyChange}
+            />
+          )}
+          {route.screen === "module-set-draft" && (
+            <ModuleSetDraftScreen
+              projectId={route.projectId}
+              studyId={route.studyId}
+              draftId={route.draftId}
+              onProjectChange={handleProjectChange}
+              onStudyChange={handleStudyChange}
+            />
+          )}
+          {route.screen === "module-set-version" && (
+            <ModuleSetVersionScreen
+              projectId={route.projectId}
+              studyId={route.studyId}
+              moduleSetId={route.moduleSetId}
+              version={route.version}
               onProjectChange={handleProjectChange}
               onStudyChange={handleStudyChange}
             />

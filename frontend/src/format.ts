@@ -1,6 +1,12 @@
 import type {
+  ModelModuleExecutionStatus,
   ModelSourceType,
   ModelStatus,
+  ModuleBoundaryResolutionStatus,
+  ModuleBoundaryTreatmentType,
+  ModulePortDirection,
+  ModuleSetDraftStatus,
+  ModuleSetOriginMethod,
   ProjectType,
   SubprojectTaskType,
   WorkflowLifecycleStatus,
@@ -57,6 +63,66 @@ const MODEL_SOURCE_TYPE_LABELS: Record<ModelSourceType, string> = {
 
 export function formatModelSourceType(sourceType: ModelSourceType): string {
   return MODEL_SOURCE_TYPE_LABELS[sourceType];
+}
+
+const MODULE_SET_ORIGIN_METHOD_LABELS: Record<ModuleSetOriginMethod, string> = {
+  AUTOMATED: "Automated",
+  MANUAL: "Manual",
+  MIXED_EDITED: "Mixed (edited)",
+};
+
+export function formatModuleSetOriginMethod(origin: ModuleSetOriginMethod): string {
+  return MODULE_SET_ORIGIN_METHOD_LABELS[origin];
+}
+
+const MODULE_SET_DRAFT_STATUS_LABELS: Record<ModuleSetDraftStatus, string> = {
+  OPEN: "Open",
+  DISCARDED: "Discarded",
+  SAVED: "Saved",
+};
+
+export function formatModuleSetDraftStatus(status: ModuleSetDraftStatus): string {
+  return MODULE_SET_DRAFT_STATUS_LABELS[status];
+}
+
+const EXECUTION_STATUS_LABELS: Record<ModelModuleExecutionStatus, string> = {
+  VIEW_ONLY: "View only",
+  REQUIRES_BOUNDARY_REVIEW: "Requires boundary review",
+  SIMULATION_READY: "Simulation ready",
+};
+
+export function formatExecutionStatus(status: ModelModuleExecutionStatus): string {
+  return EXECUTION_STATUS_LABELS[status];
+}
+
+const PORT_DIRECTION_LABELS: Record<ModulePortDirection, string> = {
+  INPUT: "Input",
+  OUTPUT: "Output",
+  INPUT_OUTPUT: "Input / output",
+};
+
+export function formatPortDirection(direction: ModulePortDirection): string {
+  return PORT_DIRECTION_LABELS[direction];
+}
+
+const BOUNDARY_TREATMENT_TYPE_LABELS: Record<ModuleBoundaryTreatmentType, string> = {
+  EXTERNALLY_CONTROLLED: "Externally controlled",
+  PRESCRIBED_INPUT: "Prescribed input",
+  DYNAMIC_COUPLING: "Dynamic coupling",
+  UNRESOLVED: "Unresolved",
+};
+
+export function formatBoundaryTreatmentType(treatment: ModuleBoundaryTreatmentType): string {
+  return BOUNDARY_TREATMENT_TYPE_LABELS[treatment];
+}
+
+const BOUNDARY_RESOLUTION_STATUS_LABELS: Record<ModuleBoundaryResolutionStatus, string> = {
+  PENDING_REVIEW: "Pending review",
+  RESOLVED: "Resolved",
+};
+
+export function formatBoundaryResolutionStatus(status: ModuleBoundaryResolutionStatus): string {
+  return BOUNDARY_RESOLUTION_STATUS_LABELS[status];
 }
 
 /** The honest placeholder for a Figma field slot with no backend counterpart,

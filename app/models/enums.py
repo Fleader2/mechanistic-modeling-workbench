@@ -385,6 +385,46 @@ class UnitParseStatus(StrEnum):
     MISSING = "MISSING"
 
 
+class ModuleSetOriginMethod(StrEnum):
+    """How one ``ModuleSetVersion`` (or, while open, ``ModuleSetDraft``) came to have its own
+    content (Module-Set Domain Model increment, ``docs/20_module_set_domain_contract.md``).
+
+    Tracked per version/draft, never per member (deferred -- see that doc's own §5/§10): one
+    holistic, user-confirmed label per save action, matching the Figma "Module set draft"/"Save
+    as new module set"/"Save new set version" screens' own single "Method:" line exactly.
+
+    ``MIXED_EDITED`` names a version that started from an existing/automated base but was then
+    hand-edited before saving -- distinct from ``MANUAL`` (built from scratch, no automated
+    search behind it at all) and ``AUTOMATED`` (an unedited automated result). The first
+    increment built against this contract only ever produces ``AUTOMATED`` (its one supported
+    draft source is an existing, unedited automated hierarchical run); ``MANUAL``/
+    ``MIXED_EDITED`` become reachable only once manual editing is built, but are declared now so
+    that increment never needs a migration to widen this enum.
+    """
+
+    AUTOMATED = "AUTOMATED"
+    MANUAL = "MANUAL"
+    MIXED_EDITED = "MIXED_EDITED"
+
+
+class ModuleSetDraftStatus(StrEnum):
+    """One ``ModuleSetDraft``'s own lifecycle state (Module-Set Domain Model increment).
+
+    ``OPEN`` -- mutable working state, freely editable (not yet exercised by the first
+    increment, which only ever reads/saves/discards an unedited draft -- editing is deferred).
+    ``DISCARDED`` -- soft-marked, never hard-deleted (a decided choice, not a routine one --
+    see ``docs/20_module_set_domain_contract.md`` §9); excluded from every default listing, and,
+    like every draft regardless of status, can never be a target of execution.
+    ``SAVED`` -- terminal; ``ModuleSetDraft.resulting_version_id`` names the immutable
+    ``ModuleSetVersion`` this draft became. A draft already ``SAVED``/``DISCARDED`` can never be
+    saved again (the save-idempotency/duplicate-save-protection rule).
+    """
+
+    OPEN = "OPEN"
+    DISCARDED = "DISCARDED"
+    SAVED = "SAVED"
+
+
 __all__ = [
     "ConfidenceClass",
     "CrossModuleDiagnosticCategory",
@@ -406,6 +446,8 @@ __all__ = [
     "ModuleBoundaryTreatmentType",
     "ModuleExecutionKind",
     "ModulePortDirection",
+    "ModuleSetDraftStatus",
+    "ModuleSetOriginMethod",
     "ProjectType",
     "RunStage",
     "RunStatus",
