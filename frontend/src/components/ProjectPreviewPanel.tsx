@@ -1,21 +1,6 @@
 import type { ProjectDetail } from "../types";
-import { formatProjectType, NOT_CAPTURED } from "../format";
-
-interface PreviewFieldProps {
-  label: string;
-  value: string | null;
-}
-
-function PreviewField({ label, value }: PreviewFieldProps) {
-  return (
-    <div className="preview-field">
-      <span className="preview-field-label">{label}</span>
-      <span className={value ? "preview-field-value" : "preview-field-value not-captured"}>
-        {value ?? NOT_CAPTURED}
-      </span>
-    </div>
-  );
-}
+import { formatProjectType } from "../format";
+import { MetadataField } from "./MetadataField";
 
 interface ProjectPreviewPanelProps {
   project: ProjectDetail;
@@ -37,15 +22,15 @@ export function ProjectPreviewPanel({ project }: ProjectPreviewPanelProps) {
       <h2 className="preview-panel-title">
         Selected project · {project.title} · {project.stable_identifier}
       </h2>
-      <div className="preview-field-grid">
-        <PreviewField label="Investigator" value={null} />
-        <PreviewField label="Start date" value={null} />
-        <PreviewField label="Project mode" value={formatProjectType(project.project_type)} />
-        <PreviewField label="Organism / strain" value={project.strain_genotype_notes} />
-        <PreviewField label="Scope / condition" value={null} />
-        <PreviewField label="Knowledge sources" value={null} />
+      <div className="metadata-field-grid">
+        <MetadataField label="Investigator" value={null} />
+        <MetadataField label="Start date" value={null} />
+        <MetadataField label="Project mode" value={formatProjectType(project.project_type)} />
+        <MetadataField label="Organism / strain" value={project.strain_genotype_notes} />
+        <MetadataField label="Scope / condition" value={null} />
+        <MetadataField label="Knowledge sources" value={null} />
       </div>
-      <PreviewField label="Objective" value={null} />
+      <MetadataField label="Objective" value={null} />
     </section>
   );
 }

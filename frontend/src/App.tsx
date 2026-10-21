@@ -1,9 +1,23 @@
+import { useCallback, useState } from "react";
+import { useRoute } from "./lib/router";
+import type { ProjectDetail } from "./types";
 import { ProjectsListScreen } from "./components/ProjectsListScreen";
+import { ProjectDetailScreen } from "./components/ProjectDetailScreen";
+import { Sidebar } from "./components/Sidebar";
 
 /** App shell: persistent header + left sidebar, matching the Figma file's
- * chrome. Only "All Projects" exists as a real nav destination this
- * increment -- every other section of the Figma file is out of scope. */
+ * chrome. Routes between "01 — All Projects" and "02 — Current Project"
+ * (see src/lib/router.ts) -- every other section of the Figma file remains
+ * out of scope. */
 export function App() {
+  const route = useRoute();
+  // Lifted out of ProjectDetailScreen so the sidebar's "PROJECT MODE"
+  // section (a sibling, not a descendant, of that screen) can show it.
+  const [sidebarProject, setSidebarProject] = useState<ProjectDetail | null>(null);
+  const handleProjectChange = useCallback((project: ProjectDetail | null) => {
+    setSidebarProject(project);
+  }, []);
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -11,14 +25,12 @@ export function App() {
         <span className="app-header-meta">Local workspace · Scientist</span>
       </header>
       <div className="app-body">
-        <nav className="app-sidebar" aria-label="Workbench navigation">
-          <span className="sidebar-section-label">Workbench</span>
-          <span className="sidebar-nav-item active" aria-current="page">
-            All Projects
-          </span>
-        </nav>
+        <Sidebar route={route} project={route.screen === "project-detail" ? sidebarProject : null} />
         <main className="app-content">
-          <ProjectsListScreen />
+          {route.screen === "projects" && <ProjectsListScreen />}
+          {route.screen === "project-detail" && (
+            <ProjectDetailScreen projectId={route.projectId} onProjectChange={handleProjectChange} />
+          )}
         </main>
       </div>
     </div>

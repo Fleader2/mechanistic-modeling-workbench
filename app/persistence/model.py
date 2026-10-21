@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -112,4 +112,17 @@ def get_model(session: Session, model_id: UUID) -> Model | None:
     return session.get(Model, model_id)
 
 
-__all__ = ["get_model", "persist_model"]
+def count_models_by_subproject(session: Session) -> dict[UUID, int]:
+    """Model count per subproject, in one aggregate query -- never one query
+    per subproject (the "Modeling Studies" table's "Models" column).
+
+    A subproject with zero models is simply absent from the returned
+    mapping; callers that need a default of ``0`` use ``dict.get(..., 0)``.
+    """
+    rows = session.execute(
+        select(Model.subproject_id, func.count(Model.id)).group_by(Model.subproject_id)
+    ).all()
+    return dict(rows)
+
+
+__all__ = ["count_models_by_subproject", "get_model", "persist_model"]

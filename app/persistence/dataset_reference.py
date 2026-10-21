@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -123,4 +123,27 @@ def get_dataset_reference(session: Session, dataset_reference_id: UUID) -> Datas
     return session.get(DatasetReference, dataset_reference_id)
 
 
-__all__ = ["get_dataset_reference", "persist_dataset_reference"]
+def count_dataset_references_by_subproject(session: Session) -> dict[UUID, int]:
+    """Dataset count per subproject, in one aggregate query (the "Modeling
+    Studies" table's "Datasets" column).
+
+    Only rows explicitly scoped to a subproject (``subproject_id`` set) are
+    counted here -- a ``DatasetReference`` scoped only to the project as a
+    whole (``subproject_id IS NULL``) belongs to no single study and must
+    never be attributed to one. A subproject with zero scoped datasets is
+    simply absent from the returned mapping; callers that need a default of
+    ``0`` use ``dict.get(..., 0)``.
+    """
+    rows = session.execute(
+        select(DatasetReference.subproject_id, func.count(DatasetReference.id))
+        .where(DatasetReference.subproject_id.is_not(None))
+        .group_by(DatasetReference.subproject_id)
+    ).all()
+    return dict(rows)
+
+
+__all__ = [
+    "count_dataset_references_by_subproject",
+    "get_dataset_reference",
+    "persist_dataset_reference",
+]

@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from app.models.enums import ModelSourceType, ModelStatus
-from app.persistence.model import get_model, persist_model
+from app.persistence.model import count_models_by_subproject, get_model, persist_model
 from app.persistence.types import PersistenceAction
 from tests.persistence.conftest import make_subproject_id
 
@@ -89,3 +89,40 @@ def test_artifact_reference_is_an_opaque_pointer(db_session):
     )
     row = get_model(db_session, result.entity_id)
     assert row.artifact_reference == "harness-run://runs/2026-10-13T00-00-00/stage2_output.json"
+
+
+def test_count_models_by_subproject_empty(db_session):
+    assert count_models_by_subproject(db_session) == {}
+
+
+def test_count_models_by_subproject_aggregates_per_subproject(db_session):
+    subproject_with_two = make_subproject_id(db_session)
+    subproject_with_one = make_subproject_id(db_session)
+    subproject_with_zero = make_subproject_id(db_session)
+    persist_model(
+        subproject_id=subproject_with_two,
+        stable_identifier=f"MODEL_{uuid.uuid4().hex[:8]}",
+        name="first",
+        source_type=ModelSourceType.GENERATED,
+        session=db_session,
+    )
+    persist_model(
+        subproject_id=subproject_with_two,
+        stable_identifier=f"MODEL_{uuid.uuid4().hex[:8]}",
+        name="second",
+        source_type=ModelSourceType.GENERATED,
+        session=db_session,
+    )
+    persist_model(
+        subproject_id=subproject_with_one,
+        stable_identifier=f"MODEL_{uuid.uuid4().hex[:8]}",
+        name="only",
+        source_type=ModelSourceType.IMPORTED,
+        session=db_session,
+    )
+
+    counts = count_models_by_subproject(db_session)
+
+    assert counts[subproject_with_two] == 2
+    assert counts[subproject_with_one] == 1
+    assert subproject_with_zero not in counts

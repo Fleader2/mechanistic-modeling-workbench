@@ -34,3 +34,13 @@ export interface ProjectDetail {
   created_at: string;
   updated_at: string;
 }
+
+// Mirrors app/schemas/subproject.py::SubprojectListItem -- the "Modeling
+// Studies" table on the "02 — Current Project" screen.
+export interface SubprojectListItem {
+  id: string;
+  title: string;
+  objective: string | null;
+  model_count: number;
+  dataset_count: number;
+}

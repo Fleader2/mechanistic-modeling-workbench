@@ -1,5 +1,7 @@
 import type { ProjectListItem } from "../types";
 import { formatProjectType } from "../format";
+import { navigate } from "../lib/router";
+import { RouterLink } from "./RouterLink";
 
 interface ProjectsTableProps {
   projects: ProjectListItem[];
@@ -9,10 +11,10 @@ interface ProjectsTableProps {
 
 /** The "01 — All Projects" table (Figma node 46:112).
  *
- * Row click selects a project (populates the preview panel below). Opening
- * a project via double-click is out of this increment's scope -- see the
- * static note ProjectsListScreen renders under this table -- so no
- * double-click handler is wired here.
+ * Row click (anywhere except the title link) selects a project (populates
+ * the preview panel below). The title itself is a real, accessible link to
+ * "02 — Current Project"; double-clicking the row also opens it, matching
+ * the screen's own copy ("Double-click its name to open it.").
  */
 export function ProjectsTable({ projects, selectedId, onSelect }: ProjectsTableProps) {
   return (
@@ -31,9 +33,14 @@ export function ProjectsTable({ projects, selectedId, onSelect }: ProjectsTableP
             key={project.id}
             className={project.id === selectedId ? "selected" : undefined}
             onClick={() => onSelect(project)}
+            onDoubleClick={() => navigate(`/projects/${project.id}`)}
             aria-selected={project.id === selectedId}
           >
-            <td>{project.title}</td>
+            <td>
+              <RouterLink to={`/projects/${project.id}`} className="project-link">
+                {project.title}
+              </RouterLink>
+            </td>
             <td>{formatProjectType(project.project_type)}</td>
             <td className={project.biological_context_summary ? undefined : "not-captured"}>
               {project.biological_context_summary ?? "Not captured"}

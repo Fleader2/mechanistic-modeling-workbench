@@ -18,9 +18,11 @@ type DetailState =
 
 /** The "01 — All Projects" screen (Figma node 46:112, file 4tLH4HX0rdgPxjpNB1aJOW).
  *
- * In scope: list projects, select a row to preview its metadata.
- * Out of scope (disabled, never silently dropped): search, opening a
- * project, project creation. See docs/16_projects_api_first_increment.md.
+ * In scope: list projects, select a row to preview its metadata, open a
+ * project (see ProjectsTable). Out of scope (disabled, never silently
+ * dropped): search, project creation. See
+ * docs/16_projects_api_first_increment.md,
+ * docs/17_current_project_increment.md.
  */
 export function ProjectsListScreen() {
   const [listState, setListState] = useState<ListState>({ status: "loading" });
@@ -70,9 +72,7 @@ export function ProjectsListScreen() {
       <p className="screen-subtitle">
         Select a project to preview its metadata. Double-click its name to open it.
       </p>
-      <p className="not-available-note">
-        Opening a project and searching projects aren&apos;t available in this increment.
-      </p>
+      <p className="not-available-note">Searching projects isn&apos;t available in this increment.</p>
 
       <button type="button" className="secondary-button" disabled title="Not available yet">
         Search projects
