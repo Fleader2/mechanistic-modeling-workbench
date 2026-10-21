@@ -1,10 +1,13 @@
 import type {
   BoundaryPortItem,
+  EditModuleSetDraftMemberRequest,
   HierarchicalRunSummary,
   ModelDetail,
   ModelLineage,
   ModelListItem,
   ModuleSetDraftDetail,
+  ModuleSetDraftValidationFindingItem,
+  ModuleSetDraftValidationResult,
   ModuleSetSummary,
   ModuleSetVersionDetail,
   ProjectDetail,
@@ -47,7 +50,7 @@ export class ApiRequestError extends Error {
 
 async function request<T>(
   path: string,
-  init?: { method?: "GET" | "POST"; body?: unknown },
+  init?: { method?: "GET" | "POST" | "PATCH"; body?: unknown },
 ): Promise<T> {
   let response: Response;
   try {
@@ -179,6 +182,31 @@ export function saveModuleSetDraft(
   );
 }
 
+export function editModuleSetDraftMember(
+  projectId: string,
+  studyId: string,
+  draftId: string,
+  memberId: string,
+  body: EditModuleSetDraftMemberRequest,
+): Promise<ModuleSetDraftValidationResult> {
+  return request<ModuleSetDraftValidationResult>(
+    `${studyPath(projectId, studyId)}/module-set-drafts/${encodeURIComponent(
+      draftId,
+    )}/members/${encodeURIComponent(memberId)}`,
+    { method: "PATCH", body },
+  );
+}
+
+export function getModuleSetDraftValidation(
+  projectId: string,
+  studyId: string,
+  draftId: string,
+): Promise<ModuleSetDraftValidationFindingItem[]> {
+  return request<ModuleSetDraftValidationFindingItem[]>(
+    `${studyPath(projectId, studyId)}/module-set-drafts/${encodeURIComponent(draftId)}/validation`,
+  );
+}
+
 export function getDraftMemberBoundaryPorts(
   projectId: string,
   studyId: string,
@@ -206,6 +234,20 @@ export function getModuleSetVersion(
     `${studyPath(projectId, studyId)}/module-sets/${encodeURIComponent(
       moduleSetId,
     )}/versions/${encodeURIComponent(version)}`,
+  );
+}
+
+export function createModuleSetEditDraft(
+  projectId: string,
+  studyId: string,
+  moduleSetId: string,
+  version: string,
+): Promise<ModuleSetDraftDetail> {
+  return request<ModuleSetDraftDetail>(
+    `${studyPath(projectId, studyId)}/module-sets/${encodeURIComponent(
+      moduleSetId,
+    )}/versions/${encodeURIComponent(version)}/edit`,
+    { method: "POST" },
   );
 }
 

@@ -19,6 +19,7 @@ rationale: see `agent1-biochemical-curator/docs/29_test_database_isolation.md`.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 
 import pytest
@@ -79,11 +80,18 @@ def real_client(real_session_app: FastAPI) -> Iterator[TestClient]:
         yield test_client
 
 
-def _seed_run_with_modules(migrated_engine: Engine) -> tuple[str, str, str]:
+def _seed_run_with_modules(
+    migrated_engine: Engine, *, reaction_ids_per_module: list[list[str]] | None = None
+) -> tuple[str, str, str]:
     """Creates one project/subproject/model/SUCCEEDED-hierarchical-run-with-2-modules through
     a real, independently-committing session -- a smaller, standalone version of
     `tests/persistence/conftest.py::make_succeeded_hierarchical_run`, which cannot be reused
     directly here because it depends on the shared, rolled-back `db_session` fixture.
+
+    `reaction_ids_per_module` (default: each module gets the single literal id `"r1"`, exactly
+    the original durability tests' own fixture shape) lets the Manual-Editing increment's own
+    durability tests give each of the two sibling modules distinct, real reaction ids, needed
+    to exercise a genuine cross-module reassignment.
 
     Returns (subproject_id, run_record_id) as strings, plus the session is closed before
     returning so the caller's own requests get fully independent sessions.
@@ -138,6 +146,9 @@ def _seed_run_with_modules(migrated_engine: Engine) -> tuple[str, str, str]:
             }
         ]
         for i, name in enumerate(names):
+            reaction_ids = (
+                reaction_ids_per_module[i] if reaction_ids_per_module is not None else ["r1"]
+            )
             nodes.append(
                 {
                     "node_id": f"node::depth1::{name}::{i:06d}::{run.id}",
@@ -159,7 +170,8 @@ def _seed_run_with_modules(migrated_engine: Engine) -> tuple[str, str, str]:
                         "modularization_id": f"cand-root-{run.id}",
                         "module_ids": [name],
                         "memberships": [
-                            {"module_id": name, "component_type": "REACTION", "component_id": "r1"}
+                            {"module_id": name, "component_type": "REACTION", "component_id": rid}
+                            for rid in reaction_ids
                         ],
                     },
                 }
@@ -294,3 +306,164 @@ class TestCorsPreflight:
         )
         assert response.status_code != 400, response.text
         assert "POST" in response.headers.get("access-control-allow-methods", "")
+
+    def test_patch_preflight_from_the_configured_frontend_origin_succeeds(
+        self, migrated_engine: Engine, real_client: TestClient
+    ) -> None:
+        """Module-Set Manual Editing increment (docs/23): the identical check, for PATCH --
+        caught live during browser verification that `allow_methods` had never been updated
+        for the new `PATCH .../members/{member_id}` route, the exact same bug class as the
+        POST one above."""
+        project_id, subproject_id, run_id = _seed_run_with_modules(migrated_engine)
+        draft_id = real_client.post(
+            f"/api/v1/projects/{project_id}/subprojects/{subproject_id}/module-set-drafts",
+            json={"run_record_id": run_id},
+        ).json()["id"]
+
+        response = real_client.options(
+            f"/api/v1/projects/{project_id}/subprojects/{subproject_id}/module-set-drafts/"
+            f"{draft_id}/members/00000000-0000-0000-0000-000000000000",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "PATCH",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        assert response.status_code != 400, response.text
+        assert "PATCH" in response.headers.get("access-control-allow-methods", "")
+
+
+class TestEditDurability:
+    """Module-Set Manual Editing increment (docs/23): the exact pattern above, extended to an
+    edit, proving a PATCH's own write (a rename and a cross-module reaction reassignment)
+    survives independently of the request that made it."""
+
+    def test_an_edit_is_visible_from_a_second_independent_session(
+        self, migrated_engine: Engine, real_client: TestClient
+    ) -> None:
+        project_id, subproject_id, run_id = _seed_run_with_modules(
+            migrated_engine, reaction_ids_per_module=[["rX1", "rX2"], ["rY1"]]
+        )
+        draft = real_client.post(
+            f"/api/v1/projects/{project_id}/subprojects/{subproject_id}/module-set-drafts",
+            json={"run_record_id": run_id},
+        ).json()
+        member_x = next(
+            m for m in draft["members"] if sorted(m["reaction_component_ids"]) == ["rX1", "rX2"]
+        )
+        member_y = next(m for m in draft["members"] if m["reaction_component_ids"] == ["rY1"])
+
+        response = real_client.patch(
+            f"/api/v1/projects/{project_id}/subprojects/{subproject_id}/module-set-drafts/"
+            f"{draft['id']}/members/{member_y['id']}",
+            json={"expected_edit_version": 0, "reaction_component_ids": ["rY1", "rX1"]},
+        )
+        assert response.status_code == 200
+
+        # Fresh session/connection, opened after the request fully returned.
+        member_y_reactions = _query_scalar(
+            migrated_engine,
+            "SELECT reaction_component_ids FROM module_set_draft_member WHERE id = :id",
+            id=member_y["id"],
+        )
+        member_x_reactions = _query_scalar(
+            migrated_engine,
+            "SELECT reaction_component_ids FROM module_set_draft_member WHERE id = :id",
+            id=member_x["id"],
+        )
+        assert sorted(json.loads(member_y_reactions)) == ["rX1", "rY1"]
+        assert json.loads(member_x_reactions) == ["rX2"]
+
+        edit_version = _query_scalar(
+            migrated_engine,
+            "SELECT edit_version FROM module_set_draft WHERE id = :id",
+            id=draft["id"],
+        )
+        assert edit_version == 1
+
+
+class TestSaveWithEditsDurability:
+    """Proves the save-time outcome of an edited draft -- renamed/reassigned members, origin
+    marked MIXED_EDITED, and the *un*edited member left exactly as increment 21 would have
+    saved it -- is durable from a second independent session, and that the invalid,
+    unresolved-edit state is rejected rather than ever reaching the database at all."""
+
+    def test_an_invalid_edit_never_reaches_the_database(
+        self, migrated_engine: Engine, real_client: TestClient
+    ) -> None:
+        project_id, subproject_id, run_id = _seed_run_with_modules(
+            migrated_engine, reaction_ids_per_module=[["rX1", "rX2"], ["rY1"]]
+        )
+        draft = real_client.post(
+            f"/api/v1/projects/{project_id}/subprojects/{subproject_id}/module-set-drafts",
+            json={"run_record_id": run_id},
+        ).json()
+        member_x = next(
+            m for m in draft["members"] if sorted(m["reaction_component_ids"]) == ["rX1", "rX2"]
+        )
+
+        real_client.patch(
+            f"/api/v1/projects/{project_id}/subprojects/{subproject_id}/module-set-drafts/"
+            f"{draft['id']}/members/{member_x['id']}",
+            json={"expected_edit_version": 0, "reaction_component_ids": ["rX1"]},
+        )
+
+        response = real_client.post(
+            f"/api/v1/projects/{project_id}/subprojects/{subproject_id}/module-set-drafts/"
+            f"{draft['id']}/save",
+            json={"mode": "new_set", "set_name": "Should never exist"},
+        )
+        assert response.status_code == 422
+
+        set_count = _query_scalar(
+            migrated_engine, "SELECT COUNT(*) FROM module_set", id=draft["id"]
+        )
+        assert set_count == 0
+
+    def test_a_saved_edit_is_durable_and_the_unedited_member_is_untouched(
+        self, migrated_engine: Engine, real_client: TestClient
+    ) -> None:
+        project_id, subproject_id, run_id = _seed_run_with_modules(
+            migrated_engine, reaction_ids_per_module=[["rX1", "rX2"], ["rY1"]]
+        )
+        draft = real_client.post(
+            f"/api/v1/projects/{project_id}/subprojects/{subproject_id}/module-set-drafts",
+            json={"run_record_id": run_id},
+        ).json()
+        member_x = next(
+            m for m in draft["members"] if sorted(m["reaction_component_ids"]) == ["rX1", "rX2"]
+        )
+        member_y = next(m for m in draft["members"] if m["reaction_component_ids"] == ["rY1"])
+
+        real_client.patch(
+            f"/api/v1/projects/{project_id}/subprojects/{subproject_id}/module-set-drafts/"
+            f"{draft['id']}/members/{member_x['id']}",
+            json={"expected_edit_version": 0, "display_name": "Durable rename"},
+        )
+
+        save_response = real_client.post(
+            f"/api/v1/projects/{project_id}/subprojects/{subproject_id}/module-set-drafts/"
+            f"{draft['id']}/save",
+            json={"mode": "new_set", "set_name": "Edited, saved for real"},
+        )
+        assert save_response.status_code == 201
+
+        origin_method = _query_scalar(
+            migrated_engine,
+            "SELECT origin_method FROM module_set_version WHERE id = :id",
+            id=save_response.json()["id"],
+        )
+        assert origin_method == "MIXED_EDITED"
+
+        saved_x_name = _query_scalar(
+            migrated_engine,
+            "SELECT display_name FROM module_set_member WHERE model_module_id = :id",
+            id=member_x["model_module_id"],
+        )
+        saved_y_reactions = _query_scalar(
+            migrated_engine,
+            "SELECT reaction_component_ids FROM module_set_member WHERE model_module_id = :id",
+            id=member_y["model_module_id"],
+        )
+        assert saved_x_name == "Durable rename"
+        assert saved_y_reactions is None  # never edited -- the minimal-diff property holds

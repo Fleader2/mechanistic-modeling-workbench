@@ -1,18 +1,21 @@
 """Module-Set domain model: a durable, versioned, user-curated grouping of ``ModelModule`` rows,
 distinct from (and sitting above) the automated hierarchical-search machinery that materializes
-them. See ``docs/20_module_set_domain_contract.md`` for the full proposal and
-``docs/21_module_set_first_increment.md`` for exactly what this first increment implements.
+them. See ``docs/20_module_set_domain_contract.md`` for the full proposal,
+``docs/21_module_set_first_increment.md`` for the first (unedited-draft) increment, and
+``docs/23_module_set_manual_editing_increment.md`` for module renaming and reaction-membership
+editing.
 
-**Scope of this increment, reflected directly in these tables' own columns**: every
-``ModuleSetMember``/``ModuleSetDraftMember`` row created by this increment references a
-pre-existing, already-materialized ``ModelModule`` (``model_module_id`` is ``NOT NULL`` on both) --
-manual editing/split/merge, and the ``ModelModule`` schema change that would let a member
-*materialize* a fresh row instead of referencing one, are deferred (``docs/20`` §2.1). No
-``ModuleLineageEdge`` table exists yet for the identical reason. Hierarchy and display name are
-therefore never duplicated onto these tables either: hierarchy is derived at read time from each
-member's own ``model_module_id -> ModelModule.parent_model_module_id``, and a module's display
-name is honestly whatever the GUI shows from ``ModelModule`` itself (which has none today) rather
-than an invented label.
+**Still true after manual editing**: every ``ModuleSetMember``/``ModuleSetDraftMember`` row
+references a pre-existing, already-materialized ``ModelModule`` (``model_module_id`` is
+``NOT NULL`` on both) -- editing a member's name/reaction membership never creates, mutates, or
+reassigns any ``ModelModule``/``HierarchyNode``/``RunRecord`` row; it only changes this row's own
+``display_name``/``reaction_component_ids`` overlay on top of the ``ModelModule`` it still
+points at. Split/merge, and the ``ModelModule`` schema change that would let a member
+*materialize* a fresh row instead of referencing one, remain deferred (``docs/20`` §2.1). No
+``ModuleLineageEdge`` table exists yet for the identical reason. Hierarchy is still never
+duplicated onto these tables: it is derived at read time from each member's own
+``model_module_id -> ModelModule.parent_model_module_id``, which never changes -- editing
+reassigns a module's *reaction content*, never its place in the hierarchy.
 """
 
 from __future__ import annotations
@@ -178,6 +181,18 @@ class ModuleSetMember(Base):
         nullable=False,
     )
 
+    #: Manual-Editing increment (``docs/23``): ``NULL`` means "never renamed" -- the member's
+    #: display is still whatever the GUI derives from the resolved ``ModelModule`` itself,
+    #: identical to every increment-21 row (this column did not exist then). Never invented;
+    #: set only by an explicit rename edit.
+    display_name: Mapped[str | None] = mapped_column(Text)
+    #: ``NULL`` means "never had its reaction membership edited" -- the member's reaction
+    #: content is still exactly whatever its resolved ``ModelModule.attach_payload`` says,
+    #: identical to every increment-21 row. When set, a JSON-encoded, sorted list of real,
+    #: Agent-2-sourced ``REACTION`` component ids -- this member's own current membership,
+    #: which may differ from its originally-materialized ``ModelModule``'s own membership.
+    reaction_component_ids: Mapped[str | None] = mapped_column(Text)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -243,6 +258,14 @@ class ModuleSetDraft(Base):
         PGUUID(as_uuid=True), ForeignKey("module_set_version.id", ondelete="RESTRICT")
     )
 
+    #: Manual-Editing increment (``docs/23``): optimistic-concurrency token, incremented by
+    #: every successful member edit (never by discard/save). A caller must supply the
+    #: ``edit_version`` it last observed when editing a member; a mismatch means someone else
+    #: edited this draft first and is reported as a 409, never silently overwritten.
+    edit_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -268,12 +291,20 @@ class ModuleSetDraft(Base):
 class ModuleSetDraftMember(Base):
     """One module included in one open (or since-saved/discarded) draft.
 
-    **As implemented in this increment**: ``model_module_id`` is ``NOT NULL`` -- every draft
-    member this increment can ever create already references an existing, unedited materialized
-    module (its only draft source). ``module_identity_id``/``parent_draft_member_id``/``name``/
-    ``membership_payload`` (the full design's own columns for manual editing) are deliberately
-    not part of this table at all yet -- adding them later is an additive ``ALTER TABLE``, not a
-    redesign (``docs/20`` §3).
+    ``model_module_id`` is ``NOT NULL`` -- every draft member this schema can ever create
+    already references an existing, materialized module; manual editing (``docs/23
+    _module_set_manual_editing_increment.md``) never creates a new ``ModelModule`` row, only
+    changes *this* row's own ``display_name``/``reaction_component_ids`` overlay on top of it.
+    ``module_identity_id``/``parent_draft_member_id``/``membership_payload`` (the full design's
+    own columns for split/merge) remain deliberately out of this table -- still deferred,
+    ``docs/20`` §3.
+
+    ``original_*`` columns are an immutable snapshot taken once, at the moment this row is
+    created (whether seeded from a run's own ``ModelModule.attach_payload`` membership, or
+    carried forward from a prior saved version's own ``ModuleSetMember`` state) -- never
+    touched again. "Show changes before saving" and every validation rule both diff the live
+    columns against this snapshot, never against the ``ModelModule`` row directly (which may
+    not even reflect the prior edit round's own carried-forward state).
     """
 
     __tablename__ = "module_set_draft_member"
@@ -291,6 +322,16 @@ class ModuleSetDraftMember(Base):
         ForeignKey("model_module.id", ondelete="RESTRICT"),
         nullable=False,
     )
+
+    #: Live, editable display name -- ``NULL`` until the first rename.
+    display_name: Mapped[str | None] = mapped_column(Text)
+    #: Live, editable JSON-encoded, sorted list of this member's own current ``REACTION``
+    #: component ids. Populated at row-creation time (never ``NULL`` for a row created by this
+    #: increment's own persistence functions) and mutated only by an explicit membership edit.
+    reaction_component_ids: Mapped[str | None] = mapped_column(Text)
+    #: Immutable snapshot of ``reaction_component_ids`` as of this row's own creation -- the
+    #: fixed baseline every validation/diff check reads, never updated after creation.
+    original_reaction_component_ids: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

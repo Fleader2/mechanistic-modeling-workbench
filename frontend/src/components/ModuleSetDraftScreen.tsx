@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   ApiRequestError,
   discardModuleSetDraft,
+  editModuleSetDraftMember,
   getDraftMemberBoundaryPorts,
   getModelingStudy,
   getModuleSetDraft,
+  getModuleSetDraftValidation,
   getProject,
   listModuleSets,
   saveModuleSetDraft,
@@ -12,7 +14,13 @@ import {
 import { createStaleGuard } from "../lib/staleGuard";
 import { formatModuleSetDraftStatus, formatModuleSetOriginMethod } from "../format";
 import { navigate } from "../lib/router";
-import type { ModuleSetDraftDetail, ModuleSetSummary, ProjectDetail, SubprojectDetail } from "../types";
+import type {
+  ModuleSetDraftDetail,
+  ModuleSetDraftValidationFindingItem,
+  ModuleSetSummary,
+  ProjectDetail,
+  SubprojectDetail,
+} from "../types";
 import { RouterLink } from "./RouterLink";
 import { ModuleHierarchyTable } from "./ModuleHierarchyTable";
 
@@ -73,6 +81,8 @@ export function ModuleSetDraftScreen({
   const [savedBy, setSavedBy] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionInFlight, setActionInFlight] = useState(false);
+  const [findings, setFindings] = useState<ModuleSetDraftValidationFindingItem[]>([]);
+  const [editError, setEditError] = useState<string | null>(null);
   const guard = useRef(createStaleGuard<string>()).current;
 
   useEffect(() => {
@@ -83,6 +93,8 @@ export function ModuleSetDraftScreen({
     setDraftState({ status: "loading" });
     setSaveForm(null);
     setActionError(null);
+    setEditError(null);
+    setFindings([]);
     onProjectChange(null);
     onStudyChange(null);
 
@@ -104,7 +116,13 @@ export function ModuleSetDraftScreen({
 
             return getModuleSetDraft(projectId, studyId, draftId)
               .then((draft) => {
-                if (guard.isCurrent(key)) setDraftState({ status: "ready", draft });
+                if (!guard.isCurrent(key)) return;
+                setDraftState({ status: "ready", draft });
+                if (draft.status === "OPEN") {
+                  getModuleSetDraftValidation(projectId, studyId, draftId).then((result) => {
+                    if (guard.isCurrent(key)) setFindings(result);
+                  });
+                }
               })
               .catch((error: unknown) => {
                 if (!guard.isCurrent(key)) return;
@@ -161,6 +179,34 @@ export function ModuleSetDraftScreen({
           error instanceof ApiRequestError ? error.message : "An unexpected error occurred.";
         setActionError(message);
         setActionInFlight(false);
+      });
+  }
+
+  function handleEdit(memberId: string, patch: { display_name?: string; reaction_component_ids?: string[] }) {
+    if (draftState.status !== "ready") return;
+    setEditError(null);
+    editModuleSetDraftMember(projectId, studyId, draftId, memberId, {
+      expected_edit_version: draftState.draft.edit_version,
+      ...patch,
+    })
+      .then((result) => {
+        setDraftState({ status: "ready", draft: result.draft });
+        setFindings(result.findings);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiRequestError && error.status === 409) {
+          setEditError(
+            "This draft was edited since you last loaded it — refreshing to the latest state.",
+          );
+          getModuleSetDraft(projectId, studyId, draftId).then((draft) => {
+            setDraftState({ status: "ready", draft });
+            if (draft.status === "OPEN") {
+              getModuleSetDraftValidation(projectId, studyId, draftId).then(setFindings);
+            }
+          });
+          return;
+        }
+        setEditError(error instanceof ApiRequestError ? error.message : "An unexpected error occurred.");
       });
   }
 
@@ -274,8 +320,9 @@ export function ModuleSetDraftScreen({
         {draft.base_run_record_id && ` · Based on hierarchical run ${draft.base_run_record_id}`}
       </p>
       <p className="not-available-note">
-        Working draft — no new set or version created until you explicitly save. Splitting,
-        merging, and renaming modules aren&apos;t available in this increment.
+        Working draft — no new set or version created until you explicitly save. Renaming a
+        module and moving a reaction to a sibling module are available below; splitting and
+        merging modules aren&apos;t available in this increment.
       </p>
 
       <section className="card" aria-label="Draft modules">
@@ -285,8 +332,44 @@ export function ModuleSetDraftScreen({
           fetchBoundaryPorts={(memberId) =>
             getDraftMemberBoundaryPorts(projectId, studyId, draftId, memberId)
           }
+          editable={
+            draft.status === "OPEN"
+              ? {
+                  findings,
+                  onRename: (memberId, displayName) => handleEdit(memberId, { display_name: displayName }),
+                  onMoveReaction: (reactionId, toMemberId) => {
+                    const target = draft.members.find((m) => m.id === toMemberId);
+                    if (!target) return;
+                    handleEdit(toMemberId, {
+                      reaction_component_ids: [...target.reaction_component_ids, reactionId],
+                    });
+                  },
+                }
+              : undefined
+          }
         />
       </section>
+
+      {editError && (
+        <p className="status-message error" role="alert">
+          {editError}
+        </p>
+      )}
+
+      {findings.length > 0 && (
+        <section className="card" aria-label="Validation findings">
+          <h2>Before you can save</h2>
+          <ul>
+            {findings
+              .filter((f) => f.code === "UNASSIGNED_REACTION")
+              .map((finding) => (
+                <li key={`${finding.code}-${finding.reaction_id}`} className="status-message error">
+                  {finding.message}
+                </li>
+              ))}
+          </ul>
+        </section>
+      )}
 
       {actionError && (
         <p className="status-message error" role="alert">
@@ -343,7 +426,7 @@ export function ModuleSetDraftScreen({
                 <button
                   type="button"
                   className="primary-button"
-                  disabled={actionInFlight || !setName.trim()}
+                  disabled={actionInFlight || !setName.trim() || findings.length > 0}
                   onClick={handleConfirmSave}
                 >
                   Confirm save
@@ -381,7 +464,7 @@ export function ModuleSetDraftScreen({
                 <button
                   type="button"
                   className="primary-button"
-                  disabled={actionInFlight || !existingSetId}
+                  disabled={actionInFlight || !existingSetId || findings.length > 0}
                   onClick={handleConfirmSave}
                 >
                   Confirm save

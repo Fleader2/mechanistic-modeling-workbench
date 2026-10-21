@@ -1,6 +1,18 @@
 # Module-Set Domain Model and GUI–Backend Contract (Proposal)
 
-**Revision note (this update):** the four items originally listed in
+**Revision note (second update):** module renaming and reaction-membership editing -- part
+of what this document's original text calls "manual editing," listed throughout as deferred --
+are now implemented. See `docs/23_module_set_manual_editing_increment.md` for the full
+implementation report. What that increment actually decided, which the rest of this document's
+own "deferred" language should now be read against: editing only ever redistributes a draft's
+own already-known reactions among sibling modules (same hierarchical parent) -- it never
+invents a reaction id, never moves one across a hierarchy boundary, and never touches the
+`ModelModule.run_record_id` schema change this document's §2.1 found genuinely blocked (editing
+a draft member's own `display_name`/`reaction_component_ids` overlay columns is additive and
+needed no such change). Split/merge and per-member origin tracking remain exactly as deferred as
+this document already said.
+
+**Revision note (first update):** the four items originally listed in
 [§9](#9-decisions-resolved-and-the-one-still-deferred) have now been **decided** by the
 project owner and are incorporated below as settled rules, not open questions: (1) a set's
 identity may span model versions, with each version immutably pinned to exactly one, and changing
@@ -690,5 +702,7 @@ identically to one that does not exist at all.
 
 **Status:** all four decisions in [§9](#9-decisions-resolved-and-the-one-still-deferred) are
 resolved. The first implementation increment built against this revised contract is reported in
-`docs/21_module_set_first_increment.md`, including the one item that remains genuinely deferred
-(the `ModelModule` schema change for manual editing/split/merge) and why.
+`docs/21_module_set_first_increment.md`. The second increment -- module renaming and
+reaction-membership editing, still never touching the `ModelModule` schema change -- is reported
+in `docs/23_module_set_manual_editing_increment.md`. Split/merge and per-member origin tracking
+remain deferred.

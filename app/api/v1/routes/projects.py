@@ -15,6 +15,7 @@ Figma section, are out of scope -- see
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, status
@@ -36,14 +37,19 @@ from app.persistence.model_module import count_model_modules_by_run
 from app.persistence.module_boundary_port import list_boundary_ports_for_module
 from app.persistence.module_set import (
     ModuleSetDraftAlreadyResolved,
+    ModuleSetDraftStaleEdit,
+    ModuleSetDraftValidationFailed,
     create_draft_from_run,
+    create_draft_from_version,
     discard_draft,
+    edit_draft_member,
     get_draft_for_subproject,
     get_module_set_for_subproject,
     get_module_set_version_by_number,
     list_drafts_for_subproject,
     list_module_sets_for_subproject,
     save_draft,
+    validate_draft,
 )
 from app.persistence.project import get_project, list_projects
 from app.persistence.run_record import list_hierarchical_runs_for_subproject
@@ -57,8 +63,11 @@ from app.schemas.model import ModelDetail, ModelLineage, ModelListItem
 from app.schemas.module_set import (
     BoundaryPortItem,
     CreateModuleSetDraftRequest,
+    EditModuleSetDraftMemberRequest,
     HierarchicalRunSummary,
     ModuleSetDraftDetail,
+    ModuleSetDraftValidationFindingItem,
+    ModuleSetDraftValidationResult,
     ModuleSetSummary,
     ModuleSetVersionDetail,
     SaveModuleSetDraftRequest,
@@ -113,6 +122,15 @@ def _require_module_set_draft(
             status_code=status.HTTP_404_NOT_FOUND,
         )
     return draft
+
+
+def _require_module_set_draft_member(draft: ModuleSetDraft, member_id: UUID) -> None:
+    if not any(m.id == member_id for m in draft.members):
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            f"No member exists with id {member_id} in draft {draft.id}.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
 
 
 def _require_module_set_version(
@@ -408,7 +426,9 @@ def get_module_set_draft(
         "The resolved ModelModule's own already-derived ModuleBoundaryPort rows -- never "
         "re-derived here, and never mutated (this increment ships no boundary-decision "
         "endpoint). A 404 for an unknown draft, or a member id that exists but belongs to a "
-        "different draft."
+        "different draft. A 409 if this member's own reaction membership has been edited: its "
+        "boundary ports were derived for its *original* membership and are never served as if "
+        "still valid for a membership that has since changed (docs/23)."
     ),
 )
 def get_draft_member_boundary_ports(
@@ -428,8 +448,100 @@ def get_draft_member_boundary_ports(
             f"No member exists with id {member_id} in draft {draft_id}.",
             status_code=status.HTTP_404_NOT_FOUND,
         )
+    if sorted(json.loads(member.reaction_component_ids)) != sorted(
+        json.loads(member.original_reaction_component_ids)
+    ):
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "This module's reaction membership has been edited -- its boundary ports were "
+            "derived for its original membership and must be re-derived before they can be "
+            "trusted, which this increment does not yet automate.",
+            status_code=status.HTTP_409_CONFLICT,
+        )
     ports = list_boundary_ports_for_module(session, member.model_module_id)
     return [BoundaryPortItem.from_port(port) for port in ports]
+
+
+@router.patch(
+    "/{project_id}/subprojects/{subproject_id}/module-set-drafts/{draft_id}/members/{member_id}",
+    response_model=ModuleSetDraftValidationResult,
+    summary="Rename a draft member and/or change its reaction membership",
+    description=(
+        "Moving a reaction into this member that a sibling currently owns silently reassigns "
+        "it away from that sibling -- a reaction is never duplicated across members. Returns "
+        "the updated draft plus every current blocking validation finding, so a caller can "
+        "show them before the user attempts to save. A 404 for an unknown draft/member; a 409 "
+        "if the draft is not OPEN, or if expected_edit_version is stale (someone/something "
+        "else edited this draft first); a 422 for an empty display_name, an empty "
+        "reaction_component_ids list, or a reaction id not known to this member's own "
+        "hierarchical sibling group as of this draft's own creation."
+    ),
+)
+def edit_module_set_draft_member(
+    project_id: UUID,
+    subproject_id: UUID,
+    draft_id: UUID,
+    member_id: UUID,
+    body: EditModuleSetDraftMemberRequest,
+    session: SessionDep,
+) -> ModuleSetDraftValidationResult:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    draft = _require_module_set_draft(session, subproject_id, draft_id)
+    _require_module_set_draft_member(draft, member_id)
+    try:
+        draft = edit_draft_member(
+            session=session,
+            draft_id=draft_id,
+            member_id=member_id,
+            expected_edit_version=body.expected_edit_version,
+            display_name=body.display_name,
+            reaction_component_ids=body.reaction_component_ids,
+        )
+    except ModuleSetDraftAlreadyResolved as exc:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            f"This draft is already {exc.draft.status.value}.",
+            status_code=status.HTTP_409_CONFLICT,
+            context={"status": exc.draft.status.value},
+        ) from exc
+    except ModuleSetDraftStaleEdit as exc:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "This draft was edited since you last loaded it.",
+            status_code=status.HTTP_409_CONFLICT,
+            context={"current_edit_version": exc.draft.edit_version},
+        ) from exc
+    except ValueError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR, str(exc), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+        ) from exc
+    session.commit()
+    findings = validate_draft(draft)
+    return ModuleSetDraftValidationResult(
+        draft=ModuleSetDraftDetail.from_draft(draft),
+        findings=[ModuleSetDraftValidationFindingItem.from_finding(f) for f in findings],
+    )
+
+
+@router.get(
+    "/{project_id}/subprojects/{subproject_id}/module-set-drafts/{draft_id}/validation",
+    response_model=list[ModuleSetDraftValidationFindingItem],
+    summary="Every current blocking validation finding for one draft",
+    description=(
+        "Unassigned reactions and emptied-out modules -- computed fresh from the draft's "
+        "current state, never cached. An empty list means the draft would save cleanly right "
+        "now. A 404 for an unknown draft."
+    ),
+)
+def get_module_set_draft_validation(
+    project_id: UUID, subproject_id: UUID, draft_id: UUID, session: SessionDep
+) -> list[ModuleSetDraftValidationFindingItem]:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    draft = _require_module_set_draft(session, subproject_id, draft_id)
+    findings = validate_draft(draft)
+    return [ModuleSetDraftValidationFindingItem.from_finding(f) for f in findings]
 
 
 @router.post(
@@ -510,6 +622,18 @@ def save_module_set_draft(
                 else None,
             },
         ) from exc
+    except ModuleSetDraftValidationFailed as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "This draft cannot be saved while it has unresolved validation findings.",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            context={
+                "findings": [
+                    ModuleSetDraftValidationFindingItem.from_finding(f).model_dump(mode="json")
+                    for f in exc.findings
+                ]
+            },
+        ) from exc
     except ValueError as exc:
         raise ApiError(
             ErrorCode.VALIDATION_ERROR, str(exc), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -558,6 +682,36 @@ def get_module_set_version_route(
     return ModuleSetVersionDetail.from_version(version_row)
 
 
+@router.post(
+    "/{project_id}/subprojects/{subproject_id}/module-sets/{module_set_id}/versions/{version}/edit",
+    response_model=ModuleSetDraftDetail,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create an editable draft from one saved module-set version",
+    description=(
+        "Seeds a new, open, editable draft from this version's own current member state -- "
+        "never edits, re-derives, or creates any ModuleSetVersion/ModelModule/HierarchyNode/"
+        "RunRecord row. A 404 for an unknown module set/version. The existing 'at most one OPEN "
+        "draft per set' rule still applies, so two concurrent edit sessions on the same set are "
+        "already prevented."
+    ),
+)
+def create_module_set_edit_draft(
+    project_id: UUID,
+    subproject_id: UUID,
+    module_set_id: UUID,
+    version: int,
+    session: SessionDep,
+) -> ModuleSetDraftDetail:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    version_row = _require_module_set_version(session, subproject_id, module_set_id, version)
+    draft = create_draft_from_version(
+        session=session, subproject_id=subproject_id, module_set_version_id=version_row.id
+    )
+    session.commit()
+    return ModuleSetDraftDetail.from_draft(draft)
+
+
 @router.get(
     "/{project_id}/subprojects/{subproject_id}/module-sets/{module_set_id}/versions/{version}"
     "/members/{member_id}/boundary-ports",
@@ -566,7 +720,9 @@ def get_module_set_version_route(
     description=(
         "The resolved ModelModule's own already-derived ModuleBoundaryPort rows -- never "
         "re-derived or mutated here. A 404 for an unknown version, or a member id that exists "
-        "but belongs to a different version."
+        "but belongs to a different version. A 409 if this member's own reaction membership "
+        "was edited before this version was saved: its boundary ports were derived for its "
+        "original membership and are never served as if still valid (docs/23)."
     ),
 )
 def get_version_member_boundary_ports(
@@ -587,6 +743,14 @@ def get_version_member_boundary_ports(
             f"No member exists with id {member_id} in version {version} of module set "
             f"{module_set_id}.",
             status_code=status.HTTP_404_NOT_FOUND,
+        )
+    if member.reaction_component_ids is not None:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "This module's reaction membership was edited before this version was saved -- its "
+            "boundary ports were derived for its original membership and must be re-derived "
+            "before they can be trusted, which this increment does not yet automate.",
+            status_code=status.HTTP_409_CONFLICT,
         )
     ports = list_boundary_ports_for_module(session, member.model_module_id)
     return [BoundaryPortItem.from_port(port) for port in ports]

@@ -9,6 +9,7 @@ increment's own established "disclose honestly, never invent" convention.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal
@@ -24,9 +25,16 @@ from app.models.enums import (
     ModuleSetDraftStatus,
     ModuleSetOriginMethod,
 )
-from app.models.model_module import ModelModule
 from app.models.module_boundary_port import ModuleBoundaryPort
-from app.models.module_set import ModuleSet, ModuleSetDraft, ModuleSetVersion
+from app.models.module_set import (
+    ModuleSet,
+    ModuleSetDraft,
+    ModuleSetDraftMember,
+    ModuleSetMember,
+    ModuleSetVersion,
+)
+from app.persistence.model_module import known_component_ids_by_type
+from app.persistence.module_set import ModuleSetDraftValidationFinding
 
 
 class HierarchicalRunSummary(BaseModel):
@@ -41,12 +49,17 @@ class HierarchicalRunSummary(BaseModel):
 
 
 class ModuleSetMemberItem(BaseModel):
-    """One module within a draft or a saved version. Identity/hierarchy/structure are read
-    directly from the real, resolved ``ModelModule`` row this member points at -- never an
-    invented display name; hierarchy (``parent_model_module_id``) is the member's own
-    *resolved* module's parent, which the frontend matches against sibling members' own
-    ``model_module_id``s to derive the set's own tree (never duplicated into this table, per
-    ``docs/20`` §6)."""
+    """One module within a saved version. Identity/hierarchy/structure are read directly from
+    the real, resolved ``ModelModule`` row this member points at; hierarchy
+    (``parent_model_module_id``) is the member's own *resolved* module's parent, which the
+    frontend matches against sibling members' own ``model_module_id``s to derive the set's own
+    tree (never duplicated into this table, per ``docs/20`` §6).
+
+    ``display_name``/``reaction_component_ids`` reflect this member's own edited state if it was
+    ever edited (``docs/23``) -- never invented when it was not: falling back honestly to
+    deriving the real, Agent-2-sourced reaction membership from the resolved ``ModelModule``'s
+    own ``attach_payload``, identical to what every increment-21 member already showed before
+    editing existed."""
 
     id: UUID
     model_module_id: UUID
@@ -54,16 +67,57 @@ class ModuleSetMemberItem(BaseModel):
     depth: int
     parent_model_module_id: UUID | None
     execution_status: ModelModuleExecutionStatus
+    display_name: str | None
+    reaction_component_ids: list[str]
+    membership_edited: bool
 
     @classmethod
-    def from_member(cls, member_row_id: UUID, model_module: ModelModule) -> ModuleSetMemberItem:
+    def from_member(cls, member: ModuleSetMember) -> ModuleSetMemberItem:
+        model_module = member.model_module
+        if member.reaction_component_ids is not None:
+            reaction_component_ids = sorted(json.loads(member.reaction_component_ids))
+            membership_edited = True
+        else:
+            reaction_component_ids = sorted(
+                known_component_ids_by_type(model_module).get("REACTION", set())
+            )
+            membership_edited = False
         return cls(
-            id=member_row_id,
+            id=member.id,
             model_module_id=model_module.id,
             module_id=model_module.module_id,
             depth=model_module.depth,
             parent_model_module_id=model_module.parent_model_module_id,
             execution_status=model_module.execution_status,
+            display_name=member.display_name,
+            reaction_component_ids=reaction_component_ids,
+            membership_edited=membership_edited,
+        )
+
+
+class ModuleSetDraftMemberItem(ModuleSetMemberItem):
+    """A draft member's own richer, editable view: also exposes the immutable snapshot every
+    edit and validation check diffs against, so the GUI can show "changed" without
+    re-deriving anything itself."""
+
+    original_reaction_component_ids: list[str]
+
+    @classmethod
+    def from_draft_member(cls, member: ModuleSetDraftMember) -> ModuleSetDraftMemberItem:
+        model_module = member.model_module
+        current = sorted(json.loads(member.reaction_component_ids))
+        original = sorted(json.loads(member.original_reaction_component_ids))
+        return cls(
+            id=member.id,
+            model_module_id=model_module.id,
+            module_id=model_module.module_id,
+            depth=model_module.depth,
+            parent_model_module_id=model_module.parent_model_module_id,
+            execution_status=model_module.execution_status,
+            display_name=member.display_name,
+            reaction_component_ids=current,
+            original_reaction_component_ids=original,
+            membership_edited=current != original,
         )
 
 
@@ -93,7 +147,8 @@ class BoundaryPortItem(BaseModel):
 class ModuleSetDraftDetail(BaseModel):
     """A draft's own full, read-only inspection view: hierarchy + hand-off to each member's
     own boundary ports (fetched separately, per member, to avoid an N-query eager load no
-    caller may need)."""
+    caller may need). ``edit_version`` is the optimistic-concurrency token a caller must echo
+    back on its next edit (``docs/23``)."""
 
     id: UUID
     subproject_id: UUID
@@ -104,10 +159,11 @@ class ModuleSetDraftDetail(BaseModel):
     origin_method: ModuleSetOriginMethod
     status: ModuleSetDraftStatus
     resulting_version_id: UUID | None
+    edit_version: int
     created_at: datetime
     updated_at: datetime
     created_by: str | None
-    members: list[ModuleSetMemberItem]
+    members: list[ModuleSetDraftMemberItem]
 
     @classmethod
     def from_draft(cls, draft: ModuleSetDraft) -> ModuleSetDraftDetail:
@@ -121,12 +177,12 @@ class ModuleSetDraftDetail(BaseModel):
             origin_method=draft.origin_method,
             status=draft.status,
             resulting_version_id=draft.resulting_version_id,
+            edit_version=draft.edit_version,
             created_at=draft.created_at,
             updated_at=draft.updated_at,
             created_by=draft.created_by,
             members=[
-                ModuleSetMemberItem.from_member(member.id, member.model_module)
-                for member in draft.members
+                ModuleSetDraftMemberItem.from_draft_member(member) for member in draft.members
             ],
         )
 
@@ -164,10 +220,7 @@ class ModuleSetVersionDetail(BaseModel):
             version_note=version.version_note,
             saved_at=version.saved_at,
             saved_by=version.saved_by,
-            members=[
-                ModuleSetMemberItem.from_member(member.id, member.model_module)
-                for member in version.members
-            ],
+            members=[ModuleSetMemberItem.from_member(member) for member in version.members],
         )
 
 
@@ -208,11 +261,55 @@ class SaveModuleSetDraftRequest(BaseModel):
     saved_by: str | None = None
 
 
+class EditModuleSetDraftMemberRequest(BaseModel):
+    """At least one of ``display_name``/``reaction_component_ids`` must be given.
+    ``expected_edit_version`` is the draft's own ``edit_version`` this edit was built against --
+    a mismatch means someone else edited the draft first (``docs/23``)."""
+
+    expected_edit_version: int
+    display_name: str | None = None
+    reaction_component_ids: list[str] | None = None
+
+
+class ModuleSetDraftValidationFindingItem(BaseModel):
+    """One actionable, blocking problem with a draft's own current state. See
+    ``ModuleSetDraftValidationFinding`` for what each ``code`` means."""
+
+    code: Literal["UNASSIGNED_REACTION", "EMPTY_MODULE"]
+    message: str
+    reaction_id: str | None
+    member_id: UUID | None
+
+    @classmethod
+    def from_finding(
+        cls, finding: ModuleSetDraftValidationFinding
+    ) -> ModuleSetDraftValidationFindingItem:
+        return cls(
+            code=finding.code,
+            message=finding.message,
+            reaction_id=finding.reaction_id,
+            member_id=finding.member_id,
+        )
+
+
+class ModuleSetDraftValidationResult(BaseModel):
+    """The draft, plus every current blocking finding -- "show changes and actionable
+    validation findings before explicit saving" (``docs/23``), returned both from every edit
+    call and from the dedicated validation endpoint."""
+
+    draft: ModuleSetDraftDetail
+    findings: list[ModuleSetDraftValidationFindingItem]
+
+
 __all__ = [
     "BoundaryPortItem",
     "CreateModuleSetDraftRequest",
+    "EditModuleSetDraftMemberRequest",
     "HierarchicalRunSummary",
     "ModuleSetDraftDetail",
+    "ModuleSetDraftMemberItem",
+    "ModuleSetDraftValidationFindingItem",
+    "ModuleSetDraftValidationResult",
     "ModuleSetMemberItem",
     "ModuleSetSummary",
     "ModuleSetVersionDetail",

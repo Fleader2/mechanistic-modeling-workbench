@@ -1,5 +1,5 @@
-import { Fragment, useState } from "react";
-import type { BoundaryPortItem, ModuleSetMemberItem } from "../types";
+import { Fragment, useRef, useState } from "react";
+import type { BoundaryPortItem, ModuleSetDraftValidationFindingItem, ModuleSetMemberItem } from "../types";
 import {
   formatBoundaryResolutionStatus,
   formatBoundaryTreatmentType,
@@ -7,33 +7,51 @@ import {
   formatPortDirection,
   NOT_CAPTURED,
 } from "../format";
+import { ApiRequestError } from "../api/client";
 
 interface ModuleHierarchyTableProps {
   members: ModuleSetMemberItem[];
   fetchBoundaryPorts: (memberId: string) => Promise<BoundaryPortItem[]>;
+  /** Manual-Editing increment (docs/23): when present, renders rename controls and
+   * per-reaction "move to a sibling" controls. Omitted entirely on the read-only reopened
+   * version screen. */
+  editable?: {
+    findings: ModuleSetDraftValidationFindingItem[];
+    onRename: (memberId: string, displayName: string) => void;
+    onMoveReaction: (reactionId: string, toMemberId: string) => void;
+  };
 }
 
-type PortsState = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; ports: BoundaryPortItem[] };
+type PortsState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "invalidated" }
+  | { status: "ready"; ports: BoundaryPortItem[] };
 
-/** The shared "inspect hierarchy/boundaries" table for both a draft
- * (`ModuleSetDraftScreen`) and a reopened saved version
- * (`ModuleSetVersionScreen`) -- read-only in both cases.
+/** The shared "inspect hierarchy/boundaries" table for a draft (`ModuleSetDraftScreen`,
+ * possibly editable) and a reopened saved version (`ModuleSetVersionScreen`, always
+ * read-only).
  *
- * Hierarchy is never stored on `ModuleSetMember`/`ModuleSetDraftMember`
- * themselves (see docs/20 §6/§21): each member only carries its own
- * resolved module's `depth`/`parent_model_module_id`, so the tree shown
- * here is derived purely by indenting on `depth` and, where a member's own
- * `parent_model_module_id` matches another member's `model_module_id` in
- * this same list, implying containment -- never inferred from name (no
- * member has one; see below) or membership-overlap heuristics.
+ * Hierarchy is never stored on `ModuleSetMember`/`ModuleSetDraftMember` themselves (see
+ * docs/20 §6/§21): each member only carries its own resolved module's
+ * `depth`/`parent_model_module_id`, so the tree shown here is derived purely by indenting on
+ * `depth` and, where a member's own `parent_model_module_id` matches another member's
+ * `model_module_id` in this same list, implying containment. A reaction may only ever be
+ * moved to a *sibling* (same `parent_model_module_id`) -- the server enforces this too
+ * (docs/23's "hierarchy rule"); the move control here only ever offers siblings in the first
+ * place, so an attempted out-of-group move is never even presentable, not merely rejected.
  *
- * No display name is invented: `ModelModule` has no `name` column today, so
- * each row shows its own real `module_id` (the content-addressed id the
- * harness itself assigned) instead of a fabricated label.
+ * `display_name` falls back to the real `module_id` (the content-addressed id the harness
+ * itself assigned) until the first rename -- never an invented label.
  */
-export function ModuleHierarchyTable({ members, fetchBoundaryPorts }: ModuleHierarchyTableProps) {
+export function ModuleHierarchyTable({
+  members,
+  fetchBoundaryPorts,
+  editable,
+}: ModuleHierarchyTableProps) {
   const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
   const [portsByMember, setPortsByMember] = useState<Record<string, PortsState>>({});
+  const renameInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const presentModuleModuleIds = new Set(members.map((m) => m.model_module_id));
   const sorted = [...members].sort(
@@ -53,6 +71,10 @@ export function ModuleHierarchyTable({ members, fetchBoundaryPorts }: ModuleHier
           setPortsByMember((prev) => ({ ...prev, [member.id]: { status: "ready", ports } }));
         })
         .catch((error: unknown) => {
+          if (error instanceof ApiRequestError && error.status === 409) {
+            setPortsByMember((prev) => ({ ...prev, [member.id]: { status: "invalidated" } }));
+            return;
+          }
           const message = error instanceof Error ? error.message : "An unexpected error occurred.";
           setPortsByMember((prev) => ({ ...prev, [member.id]: { status: "error", message } }));
         });
@@ -64,6 +86,7 @@ export function ModuleHierarchyTable({ members, fetchBoundaryPorts }: ModuleHier
       <thead>
         <tr>
           <th scope="col">Module</th>
+          <th scope="col">Reactions</th>
           <th scope="col">Execution status</th>
           <th scope="col">Boundary ports</th>
         </tr>
@@ -74,6 +97,12 @@ export function ModuleHierarchyTable({ members, fetchBoundaryPorts }: ModuleHier
             member.parent_model_module_id === null ||
             presentModuleModuleIds.has(member.parent_model_module_id);
           const portsState = portsByMember[member.id];
+          const siblings = sorted.filter(
+            (m) => m.id !== member.id && m.parent_model_module_id === member.parent_model_module_id,
+          );
+          const emptyModuleFinding = editable?.findings.find(
+            (f) => f.code === "EMPTY_MODULE" && f.member_id === member.id,
+          );
           return (
             <Fragment key={member.id}>
               <tr>
@@ -82,11 +111,75 @@ export function ModuleHierarchyTable({ members, fetchBoundaryPorts }: ModuleHier
                     className="module-hierarchy-row"
                     style={{ paddingLeft: `${member.depth * 20}px` }}
                   >
-                    <span className="module-identity-id">{member.module_id}</span>
+                    {editable ? (
+                      <>
+                        <input
+                          type="text"
+                          className="module-rename-input"
+                          defaultValue={member.display_name ?? ""}
+                          placeholder={member.module_id}
+                          ref={(el) => {
+                            renameInputs.current[member.id] = el;
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => {
+                            const value = renameInputs.current[member.id]?.value.trim();
+                            if (value) editable.onRename(member.id, value);
+                          }}
+                        >
+                          Rename
+                        </button>
+                      </>
+                    ) : (
+                      <span className="module-identity-id">
+                        {member.display_name ?? member.module_id}
+                      </span>
+                    )}
                     {!parentIncluded && (
                       <span className="not-captured module-hierarchy-orphan-note">
                         (parent module not included in this set)
                       </span>
+                    )}
+                    {member.membership_edited && (
+                      <span className="module-edited-badge">edited</span>
+                    )}
+                  </div>
+                </td>
+                <td>
+                  <div className="module-hierarchy-reactions">
+                    {member.reaction_component_ids.length === 0 && (
+                      <span className="not-captured">none</span>
+                    )}
+                    {member.reaction_component_ids.map((rid) => (
+                      <span key={rid} className="reaction-chip">
+                        {rid}
+                        {editable && siblings.length > 0 && (
+                          <select
+                            aria-label={`Move reaction ${rid} to a sibling module`}
+                            value=""
+                            onChange={(event) => {
+                              const target = event.currentTarget.value;
+                              if (target) editable.onMoveReaction(rid, target);
+                              event.currentTarget.value = "";
+                            }}
+                          >
+                            <option value="">Move to…</option>
+                            {siblings.map((sibling) => (
+                              <option key={sibling.id} value={sibling.id}>
+                                {sibling.display_name ?? sibling.module_id}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </span>
+                    ))}
+                    {emptyModuleFinding && (
+                      <p className="status-message error" role="alert">
+                        {emptyModuleFinding.message}
+                      </p>
                     )}
                   </div>
                 </td>
@@ -103,9 +196,16 @@ export function ModuleHierarchyTable({ members, fetchBoundaryPorts }: ModuleHier
               </tr>
               {expandedMemberId === member.id && (
                 <tr>
-                  <td colSpan={3} className="module-hierarchy-ports-cell">
+                  <td colSpan={4} className="module-hierarchy-ports-cell">
                     {portsState?.status === "loading" && (
                       <p className="status-message">Loading boundary ports…</p>
+                    )}
+                    {portsState?.status === "invalidated" && (
+                      <p className="status-message error" role="alert">
+                        This module&apos;s reaction membership has been edited. Its boundary
+                        ports were derived for its original membership and can&apos;t be shown
+                        as still valid -- re-deriving them is not automated in this increment.
+                      </p>
                     )}
                     {portsState?.status === "error" && (
                       <p className="status-message error" role="alert">

@@ -52,12 +52,13 @@ def make_model_id(db_session, *, subproject_id=None, **overrides) -> uuid.UUID:
     return persist_model(**kwargs).entity_id
 
 
-def _attach_payload(modularization_id: str, module_id: str) -> dict:
+def _attach_payload(modularization_id: str, module_id: str, reaction_ids: list[str]) -> dict:
     return {
         "modularization_id": modularization_id,
         "module_ids": [module_id],
         "memberships": [
-            {"module_id": module_id, "component_type": "REACTION", "component_id": "r1"}
+            {"module_id": module_id, "component_type": "REACTION", "component_id": rid}
+            for rid in reaction_ids
         ],
     }
 
@@ -69,6 +70,7 @@ def make_succeeded_hierarchical_run(
     model_id=None,
     leaf_count: int = 3,
     include_model: bool = True,
+    reaction_ids_per_leaf: list[list[str]] | None = None,
 ) -> RunRecord:
     """A terminal, ``SUCCEEDED`` ``stage=HARNESS`` run with ``leaf_count`` genuinely
     materialized depth-1 ``ModelModule`` rows -- the Module-Set Domain Model increment's own
@@ -76,6 +78,13 @@ def make_succeeded_hierarchical_run(
     own established node-fixture shape (root + accepted-but-not-further-split leaves) without
     duplicating its private helpers. ``include_model=False`` omits ``model_id`` entirely, for
     the "no model to pin" rejection case.
+
+    ``reaction_ids_per_leaf``: by default every leaf's own membership is the single literal
+    reaction id ``"r1"`` (increment 21's own original fixture shape -- every leaf's own
+    ``attach_payload`` is self-contained, so the repeated literal never collided with anything
+    increment 21 ever checked). Pass one list of real, distinct reaction ids per leaf (same
+    length as ``leaf_count``) for the Manual-Editing increment's own tests, which need distinct,
+    non-overlapping reaction identity across sibling modules to exercise a real reassignment.
     """
     if subproject_id is None:
         subproject_id = make_subproject_id(db_session)
@@ -114,6 +123,9 @@ def make_succeeded_hierarchical_run(
     ]
     for i in range(leaf_count):
         module_id = f"mod{i}-{unique}"
+        leaf_reaction_ids = (
+            reaction_ids_per_leaf[i] if reaction_ids_per_leaf is not None else ["r1"]
+        )
         nodes.append(
             {
                 "node_id": f"node::depth1::{module_id}::{i:06d}",
@@ -131,7 +143,9 @@ def make_succeeded_hierarchical_run(
                 "recursive_search_stopping_reason": "SEARCH_EXHAUSTED",
                 "recursive_search_rounds": 1,
                 "recursive_search_policy_version": "test-v1",
-                "attach_payload": _attach_payload(root_modularization_id, module_id),
+                "attach_payload": _attach_payload(
+                    root_modularization_id, module_id, leaf_reaction_ids
+                ),
             }
         )
 

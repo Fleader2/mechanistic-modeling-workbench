@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ApiRequestError,
+  createModuleSetEditDraft,
   getModelingStudy,
   getModuleSetVersion,
   getProject,
@@ -8,6 +9,7 @@ import {
 } from "../api/client";
 import { createStaleGuard } from "../lib/staleGuard";
 import { formatModuleSetOriginMethod } from "../format";
+import { navigate } from "../lib/router";
 import type { ModuleSetVersionDetail, ProjectDetail, SubprojectDetail } from "../types";
 import { RouterLink } from "./RouterLink";
 import { ModuleHierarchyTable } from "./ModuleHierarchyTable";
@@ -54,6 +56,21 @@ export function ModuleSetVersionScreen({
   const [projectState, setProjectState] = useState<ProjectState>({ status: "loading" });
   const [studyState, setStudyState] = useState<StudyState>({ status: "loading" });
   const [versionState, setVersionState] = useState<VersionState>({ status: "loading" });
+  const [editError, setEditError] = useState<string | null>(null);
+  const [creatingEditDraft, setCreatingEditDraft] = useState(false);
+
+  function handleCreateEditDraft() {
+    setEditError(null);
+    setCreatingEditDraft(true);
+    createModuleSetEditDraft(projectId, studyId, moduleSetId, version)
+      .then((draft) => {
+        navigate(`/projects/${projectId}/studies/${studyId}/module-set-drafts/${draft.id}`);
+      })
+      .catch((error: unknown) => {
+        setCreatingEditDraft(false);
+        setEditError(error instanceof ApiRequestError ? error.message : "An unexpected error occurred.");
+      });
+  }
   const guard = useRef(createStaleGuard<string>()).current;
 
   useEffect(() => {
@@ -233,6 +250,14 @@ export function ModuleSetVersionScreen({
         <p>
           <strong>Saved at:</strong> {new Date(versionDetail.saved_at).toLocaleString()}
         </p>
+        {editError && (
+          <p className="status-message error" role="alert">
+            Couldn&apos;t start editing: {editError}
+          </p>
+        )}
+        <button type="button" onClick={handleCreateEditDraft} disabled={creatingEditDraft}>
+          {creatingEditDraft ? "Starting edit…" : "Edit this version"}
+        </button>
       </section>
 
       <section className="card" aria-label="Modules">

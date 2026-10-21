@@ -603,3 +603,50 @@ h1 {
   color: var(--color-text-primary);
   font-family: inherit;
 }
+
+.module-rename-input {
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  min-width: 160px;
+}
+
+.module-edited-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-page);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.module-hierarchy-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.reaction-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-family: monospace;
+  background: var(--color-bg-page);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.reaction-chip select {
+  font-size: 11px;
+  font-family: inherit;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+}

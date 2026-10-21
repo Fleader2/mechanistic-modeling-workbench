@@ -142,9 +142,10 @@ export interface HierarchicalRunSummary {
   module_count: number;
 }
 
-// Mirrors app/schemas/module_set.py::ModuleSetMemberItem. No `name` field --
-// ModelModule has none today, and this screen never invents one (see
-// docs/21). Hierarchy is derived client-side from parent_model_module_id.
+// Mirrors app/schemas/module_set.py::ModuleSetMemberItem. `display_name` is
+// `null` until the Manual-Editing increment's own rename edit ever touches
+// it (docs/23) -- never invented otherwise. Hierarchy is derived
+// client-side from parent_model_module_id.
 export interface ModuleSetMemberItem {
   id: string;
   model_module_id: string;
@@ -152,6 +153,25 @@ export interface ModuleSetMemberItem {
   depth: number;
   parent_model_module_id: string | null;
   execution_status: ModelModuleExecutionStatus;
+  display_name: string | null;
+  reaction_component_ids: string[];
+  membership_edited: boolean;
+}
+
+// Mirrors app/schemas/module_set.py::ModuleSetDraftMemberItem -- a draft
+// member's own richer, editable view (docs/23).
+export interface ModuleSetDraftMemberItem extends ModuleSetMemberItem {
+  original_reaction_component_ids: string[];
+}
+
+// Mirrors app/schemas/module_set.py::ModuleSetDraftValidationFindingItem.
+export type ModuleSetDraftValidationFindingCode = "UNASSIGNED_REACTION" | "EMPTY_MODULE";
+
+export interface ModuleSetDraftValidationFindingItem {
+  code: ModuleSetDraftValidationFindingCode;
+  message: string;
+  reaction_id: string | null;
+  member_id: string | null;
 }
 
 // Mirrors app/schemas/module_set.py::BoundaryPortItem -- the structural
@@ -180,10 +200,22 @@ export interface ModuleSetDraftDetail {
   origin_method: ModuleSetOriginMethod;
   status: ModuleSetDraftStatus;
   resulting_version_id: string | null;
+  edit_version: number;
   created_at: string;
   updated_at: string;
   created_by: string | null;
-  members: ModuleSetMemberItem[];
+  members: ModuleSetDraftMemberItem[];
+}
+
+export interface ModuleSetDraftValidationResult {
+  draft: ModuleSetDraftDetail;
+  findings: ModuleSetDraftValidationFindingItem[];
+}
+
+export interface EditModuleSetDraftMemberRequest {
+  expected_edit_version: number;
+  display_name?: string;
+  reaction_component_ids?: string[];
 }
 
 export interface ModuleSetVersionDetail {

@@ -1,10 +1,12 @@
 """Module-Set persistence: create a draft from an existing, unedited automated hierarchical
-run; inspect it; discard it; explicitly save it (as a new set, or a new version of an existing
-one); read a saved set/version back.
+run (or from a saved version, for editing); inspect it; edit a member's name/reaction
+membership; discard it; explicitly save it (as a new set, or a new version of an existing one);
+read a saved set/version back.
 
-See ``docs/20_module_set_domain_contract.md`` for the full domain model and
-``docs/21_module_set_first_increment.md`` for exactly what this module implements. Ownership
-(project/subproject) checks live at the API route layer (mirroring
+See ``docs/20_module_set_domain_contract.md`` for the full domain model,
+``docs/21_module_set_first_increment.md`` for the unedited-draft increment, and
+``docs/23_module_set_manual_editing_increment.md`` for module renaming and reaction-membership
+editing. Ownership (project/subproject) checks live at the API route layer (mirroring
 ``app.api.v1.routes.projects``'s own established ``_require_*`` pattern) -- this module trusts
 its own callers' contract for *which* subproject a given id belongs to, the identical discipline
 ``materialize_accepted_modules`` already uses ("the caller's own contract guarantee"), but still
@@ -15,6 +17,8 @@ claims to be scoped to) -- never trusting a caller-supplied id pairing blindly.
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
@@ -22,6 +26,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.enums import ModuleSetDraftStatus, ModuleSetOriginMethod, RunStage, RunStatus
+from app.models.model_module import ModelModule
 from app.models.module_set import (
     ModuleSet,
     ModuleSetDraft,
@@ -30,7 +35,7 @@ from app.models.module_set import (
     ModuleSetVersion,
 )
 from app.models.run_record import RunRecord
-from app.persistence.model_module import list_model_modules_for_run
+from app.persistence.model_module import known_component_ids_by_type, list_model_modules_for_run
 
 
 class ModuleSetDraftAlreadyResolved(ValueError):
@@ -41,6 +46,61 @@ class ModuleSetDraftAlreadyResolved(ValueError):
     def __init__(self, draft: ModuleSetDraft) -> None:
         self.draft = draft
         super().__init__(f"ModuleSetDraft {draft.id} is already {draft.status.value}, not OPEN")
+
+
+class ModuleSetDraftStaleEdit(ValueError):
+    """Raised when an edit's ``expected_edit_version`` no longer matches the draft's own
+    current ``edit_version`` -- someone else (or another tab) edited this draft first. Carries
+    the draft's current, true ``edit_version`` so the caller can refetch and retry, rather than
+    silently overwriting the other edit."""
+
+    def __init__(self, draft: ModuleSetDraft, expected_edit_version: int) -> None:
+        self.draft = draft
+        self.expected_edit_version = expected_edit_version
+        super().__init__(
+            f"ModuleSetDraft {draft.id} is at edit_version {draft.edit_version}, not "
+            f"{expected_edit_version} -- it was edited since last read"
+        )
+
+
+@dataclass(frozen=True)
+class ModuleSetDraftValidationFinding:
+    """One actionable, blocking problem with a draft's current (possibly mid-edit) state --
+    never a style suggestion. ``docs/23`` §"Validation rules" has the full rationale for each
+    ``code``."""
+
+    code: Literal["UNASSIGNED_REACTION", "EMPTY_MODULE"]
+    message: str
+    reaction_id: str | None = None
+    member_id: UUID | None = None
+
+
+class ModuleSetDraftValidationFailed(ValueError):
+    """Raised by ``save_draft`` when ``validate_draft`` finds at least one blocking finding --
+    save never silently proceeds with unassigned reactions or an emptied-out module. Carries
+    the findings so the caller can report all of them, not just the first."""
+
+    def __init__(self, findings: list[ModuleSetDraftValidationFinding]) -> None:
+        self.findings = findings
+        super().__init__(f"draft has {len(findings)} unresolved validation finding(s)")
+
+
+def _derive_reaction_ids(model_module: ModelModule) -> list[str]:
+    """This module's own real, Agent-2-sourced ``REACTION`` component ids, straight from its
+    ``ModelModule.attach_payload`` -- the one existing, reusable mechanism for this
+    (``known_component_ids_by_type``, already relied on by calibration/validation), never
+    re-derived or inferred from anything else. Sorted for a deterministic baseline."""
+    return sorted(known_component_ids_by_type(model_module).get("REACTION", set()))
+
+
+def _encode_ids(ids: list[str]) -> str:
+    return json.dumps(sorted(ids))
+
+
+def _decode_ids(encoded: str | None) -> list[str]:
+    if encoded is None:
+        return []
+    return json.loads(encoded)
 
 
 def create_draft_from_run(
@@ -90,7 +150,78 @@ def create_draft_from_run(
     session.flush()
 
     for module in modules:
-        session.add(ModuleSetDraftMember(draft_id=draft.id, model_module_id=module.id))
+        reaction_ids = _encode_ids(_derive_reaction_ids(module))
+        session.add(
+            ModuleSetDraftMember(
+                draft_id=draft.id,
+                model_module_id=module.id,
+                reaction_component_ids=reaction_ids,
+                original_reaction_component_ids=reaction_ids,
+            )
+        )
+    session.flush()
+
+    return draft
+
+
+def create_draft_from_version(
+    *,
+    session: Session,
+    subproject_id: UUID,
+    module_set_version_id: UUID,
+    created_by: str | None = None,
+) -> ModuleSetDraft:
+    """Create a new, open, editable draft seeded from one existing saved ``ModuleSetVersion`` --
+    the manual-editing increment's own second draft source (``docs/20`` §9's "reopen-and-
+    continue-editing" path, unreachable until now).
+
+    Each new ``ModuleSetDraftMember``'s own ``original_reaction_component_ids`` is this fresh
+    draft's own baseline: whatever the version's ``ModuleSetMember`` already shows as current
+    (its own prior edit round's result if it was edited, or its resolved ``ModelModule``'s own
+    membership if it was never edited) -- *not* re-derived from the ``ModelModule`` every time,
+    so a second edit round diffs against "what the saved version actually says," never silently
+    discarding a prior edit round's own result.
+
+    Raises ``ValueError`` if the version does not belong to ``subproject_id`` (via its own
+    ``ModuleSet.subproject_id``). The "at most one OPEN draft per module_set_id" partial unique
+    index (unchanged since increment 21) already prevents two concurrent edit sessions on the
+    same set. Never mutates the version, its members, or anything else that already existed.
+    """
+    version = session.get(ModuleSetVersion, module_set_version_id)
+    if version is None or version.module_set.subproject_id != subproject_id:
+        raise ValueError(
+            f"no module-set version with id {module_set_version_id} in this Modeling Study"
+        )
+
+    draft = ModuleSetDraft(
+        subproject_id=subproject_id,
+        model_id=version.model_id,
+        module_set_id=version.module_set_id,
+        base_version_id=version.id,
+        origin_method=version.origin_method,
+        status=ModuleSetDraftStatus.OPEN,
+        created_by=created_by,
+        updated_by=created_by,
+    )
+    session.add(draft)
+    session.flush()
+
+    for member in version.members:
+        current_ids = (
+            _decode_ids(member.reaction_component_ids)
+            if member.reaction_component_ids is not None
+            else _derive_reaction_ids(member.model_module)
+        )
+        encoded = _encode_ids(current_ids)
+        session.add(
+            ModuleSetDraftMember(
+                draft_id=draft.id,
+                model_module_id=member.model_module_id,
+                display_name=member.display_name,
+                reaction_component_ids=encoded,
+                original_reaction_component_ids=encoded,
+            )
+        )
     session.flush()
 
     return draft
@@ -143,6 +274,151 @@ def discard_draft(session: Session, draft_id: UUID) -> ModuleSetDraft:
     return draft
 
 
+def _sibling_members(
+    draft: ModuleSetDraft, member: ModuleSetDraftMember
+) -> list[ModuleSetDraftMember]:
+    """Every draft member sharing ``member``'s own hierarchical parent -- its own
+    ``ModelModule.parent_model_module_id``, including members where that is ``None`` (multiple
+    top-level modules are siblings of each other too). This, not any name or position, is the
+    "hierarchy rule" a reaction may move within -- fixed for the life of a draft, since editing
+    never changes which ``ModelModule`` a member resolves to."""
+    group_key = member.model_module.parent_model_module_id
+    return [m for m in draft.members if m.model_module.parent_model_module_id == group_key]
+
+
+def edit_draft_member(
+    *,
+    session: Session,
+    draft_id: UUID,
+    member_id: UUID,
+    expected_edit_version: int,
+    display_name: str | None = None,
+    reaction_component_ids: list[str] | None = None,
+) -> ModuleSetDraft:
+    """Rename a draft member and/or change its reaction membership, within one hierarchical
+    sibling group (``docs/23`` §"Validation rules"). Moving a reaction into ``member_id`` that
+    is currently owned by a sibling silently (and only ever) reassigns it away from that
+    sibling, within the same transaction -- a reaction can never be duplicated across members
+    by construction, never merely checked for afterward.
+
+    Raises ``ValueError`` if: neither ``display_name`` nor ``reaction_component_ids`` is given;
+    ``display_name`` is empty/whitespace-only; ``member_id`` does not belong to ``draft_id``; or
+    any id in ``reaction_component_ids`` is not a real id known to this member's own sibling
+    group as of this draft's own creation (never invented, never matched by name).
+    ``ModuleSetDraftAlreadyResolved`` if the draft is not ``OPEN``. ``ModuleSetDraftStaleEdit``
+    if ``expected_edit_version`` no longer matches the draft's own current value.
+
+    Never touches ``ModelModule``/``HierarchyNode``/``RunRecord``/``ModuleBoundaryPort`` -- only
+    this draft's own member rows and ``origin_method``/``edit_version``.
+    """
+    if display_name is None and reaction_component_ids is None:
+        raise ValueError("edit_draft_member requires display_name and/or reaction_component_ids")
+
+    draft = session.get(ModuleSetDraft, draft_id)
+    if draft is None:
+        raise ValueError(f"no ModuleSetDraft with id {draft_id}")
+    if draft.status is not ModuleSetDraftStatus.OPEN:
+        raise ModuleSetDraftAlreadyResolved(draft)
+    if draft.edit_version != expected_edit_version:
+        raise ModuleSetDraftStaleEdit(draft, expected_edit_version)
+
+    member = next((m for m in draft.members if m.id == member_id), None)
+    if member is None:
+        raise ValueError(f"no member with id {member_id} in draft {draft_id}")
+
+    if display_name is not None:
+        if not display_name.strip():
+            raise ValueError("display_name must not be empty")
+        member.display_name = display_name.strip()
+
+    if reaction_component_ids is not None:
+        proposed = set(reaction_component_ids)
+        if not proposed:
+            raise ValueError("reaction_component_ids must not be empty")
+
+        siblings = _sibling_members(draft, member)
+        group_universe = {
+            rid for m in siblings for rid in _decode_ids(m.original_reaction_component_ids)
+        }
+        unknown = proposed - group_universe
+        if unknown:
+            raise ValueError(
+                f"reaction id(s) {sorted(unknown)} are not known to this module's own "
+                "hierarchical sibling group as of this draft's own creation -- membership "
+                "can only be redistributed among already-known reactions, never invented"
+            )
+
+        for sibling in siblings:
+            if sibling.id == member.id:
+                continue
+            sibling_current = set(_decode_ids(sibling.reaction_component_ids))
+            taken = sibling_current & proposed
+            if taken:
+                sibling.reaction_component_ids = _encode_ids(sorted(sibling_current - taken))
+
+        member.reaction_component_ids = _encode_ids(sorted(proposed))
+
+    if any(
+        m.display_name is not None
+        or _decode_ids(m.reaction_component_ids) != _decode_ids(m.original_reaction_component_ids)
+        for m in draft.members
+    ):
+        draft.origin_method = ModuleSetOriginMethod.MIXED_EDITED
+
+    draft.edit_version += 1
+    session.flush()
+    return draft
+
+
+def validate_draft(draft: ModuleSetDraft) -> list[ModuleSetDraftValidationFinding]:
+    """Every blocking finding against a draft's own current (possibly mid-edit) state --
+    purely a read over already-loaded member rows, no query of its own. Scoped per
+    hierarchical sibling group (``docs/23`` §"Validation rules"): a reaction can only ever be
+    unassigned *within* the group it has always belonged to, since editing never lets a
+    reaction cross group boundaries in the first place.
+
+    ``UNASSIGNED_REACTION``: a reaction present in some member's own ``original_
+    reaction_component_ids`` for this group, but not currently owned by any member of it.
+    ``EMPTY_MODULE``: a member whose current reaction membership is empty.
+    """
+    findings: list[ModuleSetDraftValidationFinding] = []
+    seen_groups: set[UUID | None] = set()
+    for member in draft.members:
+        group_key = member.model_module.parent_model_module_id
+        if group_key in seen_groups:
+            continue
+        seen_groups.add(group_key)
+
+        siblings = _sibling_members(draft, member)
+        group_universe = {
+            rid for m in siblings for rid in _decode_ids(m.original_reaction_component_ids)
+        }
+        currently_assigned = {
+            rid for m in siblings for rid in _decode_ids(m.reaction_component_ids)
+        }
+        for missing in sorted(group_universe - currently_assigned):
+            findings.append(
+                ModuleSetDraftValidationFinding(
+                    code="UNASSIGNED_REACTION",
+                    message=(
+                        f"Reaction {missing!r} is not currently assigned to any module in its "
+                        "own hierarchical sibling group."
+                    ),
+                    reaction_id=missing,
+                )
+            )
+        for sibling in siblings:
+            if not _decode_ids(sibling.reaction_component_ids):
+                findings.append(
+                    ModuleSetDraftValidationFinding(
+                        code="EMPTY_MODULE",
+                        message="This module has no reactions assigned to it.",
+                        member_id=sibling.id,
+                    )
+                )
+    return findings
+
+
 def _allocate_stable_identifier(session: Session, subproject_id: UUID) -> str:
     """The next sequential ``"MS-00N"`` display id for one Modeling Study -- simple counting
     allocation (this is a single-user local Workbench with no concurrent-write contention to
@@ -180,12 +456,20 @@ def save_draft(
     produce references the pre-existing module its ``ModuleSetDraftMember`` already named
     (``docs/20`` §2.1). Never mutates any `ModelModule`/`ModuleBoundaryPort`/
     `ModuleExecutionSnapshot`/`RunRecord` row that already existed.
+
+    Raises ``ModuleSetDraftValidationFailed`` if ``validate_draft`` finds any blocking finding
+    (an unassigned reaction, or a module edited down to zero reactions) -- save never proceeds
+    with an incomplete edit, even partially.
     """
     draft = session.get(ModuleSetDraft, draft_id)
     if draft is None:
         raise ValueError(f"no ModuleSetDraft with id {draft_id}")
     if draft.status is not ModuleSetDraftStatus.OPEN:
         raise ModuleSetDraftAlreadyResolved(draft)
+
+    findings = validate_draft(draft)
+    if findings:
+        raise ModuleSetDraftValidationFailed(findings)
 
     if mode == "new_set":
         if not isinstance(set_name, str) or not set_name.strip():
@@ -246,9 +530,17 @@ def save_draft(
     session.flush()
 
     for draft_member in draft.members:
+        membership_edited = _decode_ids(draft_member.reaction_component_ids) != _decode_ids(
+            draft_member.original_reaction_component_ids
+        )
         session.add(
             ModuleSetMember(
-                module_set_version_id=version.id, model_module_id=draft_member.model_module_id
+                module_set_version_id=version.id,
+                model_module_id=draft_member.model_module_id,
+                display_name=draft_member.display_name,
+                reaction_component_ids=(
+                    draft_member.reaction_component_ids if membership_edited else None
+                ),
             )
         )
 
@@ -299,8 +591,13 @@ def get_module_set_version_by_number(
 
 __all__ = [
     "ModuleSetDraftAlreadyResolved",
+    "ModuleSetDraftStaleEdit",
+    "ModuleSetDraftValidationFailed",
+    "ModuleSetDraftValidationFinding",
     "create_draft_from_run",
+    "create_draft_from_version",
     "discard_draft",
+    "edit_draft_member",
     "get_draft",
     "get_draft_for_subproject",
     "get_module_set",
@@ -309,4 +606,5 @@ __all__ = [
     "list_drafts_for_subproject",
     "list_module_sets_for_subproject",
     "save_draft",
+    "validate_draft",
 ]
