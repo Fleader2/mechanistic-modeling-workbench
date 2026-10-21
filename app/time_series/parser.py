@@ -1,0 +1,466 @@
+"""Parses a time-series dataset workbook (``.xlsx`` bytes) into a ``ParsedWorkbook`` -- never
+touching a database, a model, or an Antimony species name (task instructions: "uploading and
+saving a dataset must not require a model or matching Antimony species names").
+
+Two distinct outcomes, by design (task instructions: "distinguish malformed workbooks that
+cannot be imported from incomplete scientific metadata that can be saved with unresolved
+findings"):
+
+* **Malformed** -- the file cannot be opened at all, a required sheet is missing, the Data
+  tab has no usable header row, no ``time`` column, zero measurement columns, or a duplicate
+  column header. ``parse_workbook`` raises ``WorkbookMalformedError`` (carrying every such
+  problem found, not just the first) -- there is no partial result to preview or save.
+* **Parseable, possibly scientifically incomplete** -- everything else (a blank required
+  metadata field, an undeclared measurement-column unit, an unrecognized cell value, an
+  all-missing data row) becomes a non-blocking ``Finding`` on the returned ``ParsedWorkbook``.
+  Every finding here is disclosed, never silently dropped, but none of them prevents a save.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from io import BytesIO
+from typing import Literal
+
+from openpyxl import load_workbook
+from openpyxl.worksheet.worksheet import Worksheet
+
+from app.models.enums import MeasurementValueStatus
+from app.time_series.contract import (
+    CONDITION_LEGEND_SECTION_MARKER,
+    DATA_SHEET_NAME,
+    MEASUREMENT_COLUMNS_SECTION_MARKER,
+    METADATA_FIELDS,
+    METADATA_SHEET_NAME,
+    NOT_APPLICABLE_TOKENS,
+    STRUCTURAL_DATA_COLUMNS,
+    TEMPLATE_VERSION,
+    TIME_COLUMN,
+    UNKNOWN_TOKENS,
+)
+
+FindingSeverity = Literal["BLOCKING", "INFO"]
+
+
+@dataclass(frozen=True, slots=True)
+class Finding:
+    code: str
+    severity: FindingSeverity
+    message: str
+    field: str | None = None
+    column_name: str | None = None
+    row_index: int | None = None
+
+
+class WorkbookMalformedError(ValueError):
+    """Raised only for a structural problem that leaves nothing parseable -- never for a gap
+    in the scientific content itself (see module docstring)."""
+
+    def __init__(self, findings: list[Finding]) -> None:
+        self.findings = findings
+        super().__init__("; ".join(f.message for f in findings))
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementValue:
+    status: MeasurementValueStatus
+    value: float | None
+    raw: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementColumnDefinition:
+    column_name: str
+    display_order: int
+    unit: str | None
+    description: str | None
+    declared_in_metadata: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DataRow:
+    row_index: int
+    sample_id: str | None
+    condition_id: str | None
+    biological_replicate: str | None
+    technical_replicate: str | None
+    time_status: MeasurementValueStatus
+    time_value: float | None
+    time_raw: str | None
+    measurements: dict[str, MeasurementValue]
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedWorkbook:
+    metadata: dict[str, str | None]
+    condition_legend: list[tuple[str, str | None]]
+    measurement_columns: list[MeasurementColumnDefinition]
+    rows: list[DataRow]
+    findings: list[Finding] = field(default_factory=list)
+
+
+def _classify_cell_value(
+    cell_value: object,
+) -> tuple[MeasurementValueStatus, float | None, str | None]:
+    """One Data-tab measurement/time cell -> ``(status, numeric value, raw text)``. The one
+    place "missing," "not applicable," "unknown," "a real zero," and "unparseable junk" are
+    told apart (task instructions: "distinguish missing, unknown, and not-applicable values;
+    preserve reported zeros")."""
+    if cell_value is None:
+        return MeasurementValueStatus.MISSING, None, None
+    if isinstance(cell_value, bool):
+        # isinstance(True, int) is True in Python -- guarded separately so a stray boolean
+        # cell is never silently coerced into 1.0/0.0.
+        return MeasurementValueStatus.UNRECOGNIZED, None, str(cell_value)
+    if isinstance(cell_value, int | float):
+        return MeasurementValueStatus.MEASURED, float(cell_value), str(cell_value)
+    if isinstance(cell_value, str):
+        text = cell_value.strip()
+        if text == "":
+            return MeasurementValueStatus.MISSING, None, None
+        lowered = text.lower()
+        if lowered in NOT_APPLICABLE_TOKENS:
+            return MeasurementValueStatus.NOT_APPLICABLE, None, text
+        if lowered in UNKNOWN_TOKENS:
+            return MeasurementValueStatus.UNKNOWN, None, text
+        try:
+            return MeasurementValueStatus.MEASURED, float(text), text
+        except ValueError:
+            return MeasurementValueStatus.UNRECOGNIZED, None, text
+    return MeasurementValueStatus.UNRECOGNIZED, None, str(cell_value)
+
+
+def _cell_text(value: object) -> str | None:
+    """A Metadata/legend-table cell's own value as a trimmed string, or ``None`` for blank --
+    never fabricated, never coerced through float formatting that could alter a human-entered
+    string (e.g. a date)."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _find_section_start(sheet: Worksheet, marker_prefix: str) -> int | None:
+    """The 1-based row number immediately after a section-marker row whose own column-A text
+    starts with ``marker_prefix`` -- or ``None`` if no such marker exists (the sub-table is
+    simply absent, never an error)."""
+    for row_index in range(1, sheet.max_row + 1):
+        cell_value = sheet.cell(row=row_index, column=1).value
+        if isinstance(cell_value, str) and cell_value.strip().startswith(marker_prefix):
+            return row_index + 1
+    return None
+
+
+def _read_subtable(sheet: Worksheet, header_row: int, column_count: int) -> list[tuple[str, ...]]:
+    """Every row after ``header_row`` (which is itself skipped) up to the first fully-blank
+    row or the end of the sheet -- each as a tuple of ``column_count`` trimmed strings/``None``.
+    """
+    rows: list[tuple[str, ...]] = []
+    for row_index in range(header_row + 1, sheet.max_row + 1):
+        values = [sheet.cell(row=row_index, column=c).value for c in range(1, column_count + 1)]
+        if all(v is None for v in values):
+            break
+        rows.append(tuple(_cell_text(v) for v in values))
+    return rows
+
+
+def _parse_metadata_sheet(
+    sheet: Worksheet,
+) -> tuple[dict[str, str | None], list[tuple[str, str | None]], list[Finding]]:
+    findings: list[Finding] = []
+    label_to_key = {f.label.strip().lower(): f for f in METADATA_FIELDS}
+    found_labels: dict[str, str | None] = {}
+    for row_index in range(1, sheet.max_row + 1):
+        label_cell = sheet.cell(row=row_index, column=1).value
+        if not isinstance(label_cell, str):
+            continue
+        field_def = label_to_key.get(label_cell.strip().lower())
+        if field_def is None:
+            continue
+        found_labels[field_def.key] = _cell_text(sheet.cell(row=row_index, column=2).value)
+
+    metadata: dict[str, str | None] = {}
+    for field_def in METADATA_FIELDS:
+        value = found_labels.get(field_def.key)
+        metadata[field_def.key] = value
+        if field_def.key == "template_version":
+            if value != TEMPLATE_VERSION:
+                findings.append(
+                    Finding(
+                        "TEMPLATE_VERSION_MISSING_OR_UNRECOGNIZED",
+                        "INFO",
+                        f"Template version is {value!r}, expected {TEMPLATE_VERSION!r}. "
+                        "Parsed as the current version regardless.",
+                        field=field_def.key,
+                    )
+                )
+            continue
+        if field_def.required and value is None:
+            findings.append(
+                Finding(
+                    "MISSING_METADATA_FIELD",
+                    "INFO",
+                    f"{field_def.label!r} was left blank.",
+                    field=field_def.key,
+                )
+            )
+
+    condition_legend: list[tuple[str, str | None]] = []
+    legend_start = _find_section_start(sheet, CONDITION_LEGEND_SECTION_MARKER)
+    if legend_start is not None:
+        for condition_id, description in _read_subtable(sheet, legend_start, 2):
+            if condition_id is not None:
+                condition_legend.append((condition_id, description))
+
+    return metadata, condition_legend, findings
+
+
+def _parse_measurement_column_definitions(
+    sheet: Worksheet,
+) -> dict[str, tuple[str | None, str | None]]:
+    """Metadata-declared ``{column_name: (unit, description)}`` -- matched against the Data
+    tab's own headers by the caller, never here (this function knows nothing about the Data
+    tab)."""
+    declarations: dict[str, tuple[str | None, str | None]] = {}
+    section_start = _find_section_start(sheet, MEASUREMENT_COLUMNS_SECTION_MARKER)
+    if section_start is None:
+        return declarations
+    for column_name, unit, description in _read_subtable(sheet, section_start, 3):
+        if column_name is not None:
+            declarations[column_name] = (unit, description)
+    return declarations
+
+
+def _parse_data_header(
+    sheet: Worksheet,
+) -> tuple[dict[str, int], list[tuple[int, str]], list[Finding]]:
+    """``(structural_column_indices, measurement_columns_by_index, blocking_findings)`` --
+    ``structural_column_indices`` maps a structural key (``app.time_series.contract
+    .STRUCTURAL_DATA_COLUMNS``) to its 1-based column index; ``measurement_columns_by_index``
+    is ``[(index, exact_original_header_text), ...]`` in left-to-right order."""
+    findings: list[Finding] = []
+    header_values = list(next(sheet.iter_rows(min_row=1, max_row=1, values_only=True), ()))
+
+    structural_by_key: dict[str, int] = {}
+    measurement_columns: list[tuple[int, str]] = []
+    seen_headers: dict[str, int] = {}
+
+    for zero_based_index, raw_header in enumerate(header_values):
+        column_index = zero_based_index + 1
+        if raw_header is None or (isinstance(raw_header, str) and raw_header.strip() == ""):
+            continue
+        header_text = raw_header if isinstance(raw_header, str) else str(raw_header)
+        header_text = header_text.strip()
+        lowered = header_text.lower()
+
+        structural_match = next((c for c in STRUCTURAL_DATA_COLUMNS if c == lowered), None)
+        dedup_key = lowered if structural_match is not None else header_text
+        if dedup_key in seen_headers:
+            findings.append(
+                Finding(
+                    "DUPLICATE_DATA_COLUMN_HEADER",
+                    "BLOCKING",
+                    f"Column header {header_text!r} appears more than once in the Data tab.",
+                    column_name=header_text,
+                )
+            )
+            continue
+        seen_headers[dedup_key] = column_index
+
+        if structural_match is not None:
+            structural_by_key[structural_match] = column_index
+        else:
+            measurement_columns.append((column_index, header_text))
+
+    if TIME_COLUMN not in structural_by_key:
+        findings.append(
+            Finding(
+                "MISSING_TIME_COLUMN",
+                "BLOCKING",
+                "The Data tab has no column named 'time' (case-insensitive).",
+            )
+        )
+    if not measurement_columns:
+        findings.append(
+            Finding(
+                "NO_MEASUREMENT_COLUMNS",
+                "BLOCKING",
+                "The Data tab has no measurement columns -- nothing to import.",
+            )
+        )
+    return structural_by_key, measurement_columns, findings
+
+
+def parse_workbook(data: bytes) -> ParsedWorkbook:
+    """Parse ``.xlsx`` bytes into a ``ParsedWorkbook``. Raises ``WorkbookMalformedError`` (see
+    module docstring) for a structural problem; every scientific-content gap instead becomes a
+    non-blocking ``Finding`` on the result."""
+    try:
+        workbook = load_workbook(BytesIO(data), data_only=True, read_only=True)
+    except Exception as exc:
+        raise WorkbookMalformedError(
+            [
+                Finding(
+                    "WORKBOOK_UNREADABLE", "BLOCKING", f"Could not open as an .xlsx file: {exc!r}"
+                )
+            ]
+        ) from exc
+
+    missing_sheets = [
+        name for name in (METADATA_SHEET_NAME, DATA_SHEET_NAME) if name not in workbook.sheetnames
+    ]
+    if missing_sheets:
+        raise WorkbookMalformedError(
+            [
+                Finding(
+                    "MISSING_REQUIRED_SHEET",
+                    "BLOCKING",
+                    f"Required sheet {name!r} is missing.",
+                )
+                for name in missing_sheets
+            ]
+        )
+
+    data_sheet = workbook[DATA_SHEET_NAME]
+    if data_sheet.max_row < 1 or data_sheet.max_column < 1:
+        raise WorkbookMalformedError(
+            [Finding("DATA_SHEET_EMPTY", "BLOCKING", "The Data tab has no header row.")]
+        )
+
+    structural_by_key, measurement_column_headers, header_findings = _parse_data_header(data_sheet)
+    blocking = [f for f in header_findings if f.severity == "BLOCKING"]
+    if blocking:
+        raise WorkbookMalformedError(blocking)
+
+    metadata_sheet = workbook[METADATA_SHEET_NAME]
+    metadata, condition_legend, metadata_findings = _parse_metadata_sheet(metadata_sheet)
+    declared_columns = _parse_measurement_column_definitions(metadata_sheet)
+
+    findings: list[Finding] = list(metadata_findings)
+
+    measurement_columns: list[MeasurementColumnDefinition] = []
+    declared_names_used: set[str] = set()
+    for display_order, (_, column_name) in enumerate(measurement_column_headers):
+        declaration = declared_columns.get(column_name)
+        if declaration is None:
+            findings.append(
+                Finding(
+                    "MEASUREMENT_COLUMN_UNIT_UNDECLARED",
+                    "INFO",
+                    f"Data column {column_name!r} has no matching entry in the Metadata "
+                    "tab's measurement column definitions -- its unit is unknown.",
+                    column_name=column_name,
+                )
+            )
+            measurement_columns.append(
+                MeasurementColumnDefinition(column_name, display_order, None, None, False)
+            )
+        else:
+            declared_names_used.add(column_name)
+            unit, description = declaration
+            measurement_columns.append(
+                MeasurementColumnDefinition(column_name, display_order, unit, description, True)
+            )
+    for declared_name in declared_columns:
+        if declared_name not in declared_names_used:
+            findings.append(
+                Finding(
+                    "UNDECLARED_MEASUREMENT_COLUMN_ORPHAN_DEFINITION",
+                    "INFO",
+                    f"The Metadata tab declares a measurement column {declared_name!r} that "
+                    "does not appear in the Data tab.",
+                    column_name=declared_name,
+                )
+            )
+
+    rows: list[DataRow] = []
+    kept_row_index = 0
+    for sheet_row_values in data_sheet.iter_rows(min_row=2, values_only=True):
+        if all(v is None for v in sheet_row_values):
+            continue
+        row_index = kept_row_index
+        kept_row_index += 1
+
+        def _structural(key: str, values: tuple = sheet_row_values) -> str | None:
+            col = structural_by_key.get(key)
+            if col is None:
+                return None
+            return _cell_text(values[col - 1])
+
+        time_col = structural_by_key[TIME_COLUMN]
+        time_status, time_value, time_raw = _classify_cell_value(sheet_row_values[time_col - 1])
+        if time_status == MeasurementValueStatus.MISSING:
+            findings.append(
+                Finding("TIME_VALUE_MISSING", "INFO", "Time value is blank.", row_index=row_index)
+            )
+        elif time_status == MeasurementValueStatus.UNRECOGNIZED:
+            findings.append(
+                Finding(
+                    "DATA_CELL_UNRECOGNIZED_VALUE",
+                    "INFO",
+                    f"Time value {time_raw!r} is not numeric and not a recognized token.",
+                    column_name="time",
+                    row_index=row_index,
+                )
+            )
+
+        measurements: dict[str, MeasurementValue] = {}
+        any_measured_or_disclosed = False
+        for column_index, column_name in measurement_column_headers:
+            status, value, raw = _classify_cell_value(sheet_row_values[column_index - 1])
+            measurements[column_name] = MeasurementValue(status, value, raw)
+            if status != MeasurementValueStatus.MISSING:
+                any_measured_or_disclosed = True
+            if status == MeasurementValueStatus.UNRECOGNIZED:
+                findings.append(
+                    Finding(
+                        "DATA_CELL_UNRECOGNIZED_VALUE",
+                        "INFO",
+                        f"Value {raw!r} in column {column_name!r} is not numeric and not a "
+                        "recognized token.",
+                        column_name=column_name,
+                        row_index=row_index,
+                    )
+                )
+        if not any_measured_or_disclosed:
+            findings.append(
+                Finding(
+                    "DATA_ROW_ALL_MEASUREMENTS_MISSING",
+                    "INFO",
+                    "Every measurement column in this row is blank.",
+                    row_index=row_index,
+                )
+            )
+
+        rows.append(
+            DataRow(
+                row_index=row_index,
+                sample_id=_structural("sample_id"),
+                condition_id=_structural("condition_id"),
+                biological_replicate=_structural("biological_replicate"),
+                technical_replicate=_structural("technical_replicate"),
+                time_status=time_status,
+                time_value=time_value,
+                time_raw=time_raw,
+                measurements=measurements,
+            )
+        )
+
+    return ParsedWorkbook(
+        metadata=metadata,
+        condition_legend=condition_legend,
+        measurement_columns=measurement_columns,
+        rows=rows,
+        findings=findings,
+    )
+
+
+__all__ = [
+    "DataRow",
+    "Finding",
+    "MeasurementColumnDefinition",
+    "MeasurementValue",
+    "ParsedWorkbook",
+    "WorkbookMalformedError",
+    "parse_workbook",
+]

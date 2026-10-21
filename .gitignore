@@ -27,3 +27,6 @@ htmlcov/
 
 # macOS
 .DS_Store
+
+# Durable file artifacts (app.storage) -- local-disk content-addressed blobs, never source
+artifacts/

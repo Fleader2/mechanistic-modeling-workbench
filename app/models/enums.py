@@ -385,6 +385,28 @@ class UnitParseStatus(StrEnum):
     MISSING = "MISSING"
 
 
+class MeasurementValueStatus(StrEnum):
+    """What one Data-tab cell in a time-series dataset's own measurement/time column actually
+    says, for `app.models.time_series_dataset.TimeSeriesDatasetRow.measurements` -- never
+    collapsed to a bare numeric-or-null, since "left blank," "recorded as not applicable,"
+    "recorded as unknown," and "a real, reported zero" are four different scientific claims
+    (task instructions: "distinguish missing, unknown, and not-applicable values; preserve
+    reported zeros").
+
+    ``MEASURED`` is the only status carrying a numeric value (zero is a perfectly ordinary
+    ``MEASURED`` value, never treated as absent). ``UNRECOGNIZED`` is for a non-blank cell that
+    is neither numeric nor one of the recognized missing/unknown/not-applicable tokens -- kept
+    distinct from ``MISSING`` so a typo or stray text is never silently treated as "no data,"
+    and is always paired with a non-blocking validation finding naming the raw text.
+    """
+
+    MEASURED = "MEASURED"
+    MISSING = "MISSING"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    UNKNOWN = "UNKNOWN"
+    UNRECOGNIZED = "UNRECOGNIZED"
+
+
 class ModuleSetOriginMethod(StrEnum):
     """How one ``ModuleSetVersion`` (or, while open, ``ModuleSetDraft``) came to have its own
     content (Module-Set Domain Model increment, ``docs/20_module_set_domain_contract.md``).
@@ -432,6 +454,7 @@ __all__ = [
     "DiagnosticSeverity",
     "HierarchyResumeAttemptStatus",
     "HierarchyReviewDecisionValue",
+    "MeasurementValueStatus",
     "ModelBuildRequestGeneProteinRole",
     "ModelBuildRequestPathwayRole",
     "ModelBuildRequestReactionRole",

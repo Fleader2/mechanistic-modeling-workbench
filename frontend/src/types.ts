@@ -326,3 +326,84 @@ export interface ModuleSetSimulationRunItem {
   lineage: Record<string, unknown> | null;
   agent3_report: Record<string, unknown> | null;
 }
+
+// Mirrors app/schemas/time_series_dataset.py (Downloadable Two-Tab Excel Template increment).
+// A "finding" is never a reason a save is blocked -- only a malformed workbook (rejected with
+// a 422 before anything is saved) is. See docs/25_time_series_dataset_import_increment.md.
+
+export type MeasurementValueStatus =
+  | "MEASURED"
+  | "MISSING"
+  | "NOT_APPLICABLE"
+  | "UNKNOWN"
+  | "UNRECOGNIZED";
+
+export interface TimeSeriesFindingItem {
+  code: string;
+  severity: "BLOCKING" | "INFO";
+  message: string;
+  field: string | null;
+  column_name: string | null;
+  row_index: number | null;
+}
+
+export interface TimeSeriesConditionLegendItem {
+  condition_id: string;
+  description: string | null;
+}
+
+export interface TimeSeriesMeasurementColumnItem {
+  column_name: string;
+  display_order: number;
+  unit: string | null;
+  description: string | null;
+  declared_in_metadata: boolean;
+}
+
+export interface TimeSeriesMeasurementValueItem {
+  status: MeasurementValueStatus;
+  value: number | null;
+  raw: string | null;
+}
+
+export interface TimeSeriesDataRowItem {
+  row_index: number;
+  sample_id: string | null;
+  condition_id: string | null;
+  biological_replicate: string | null;
+  technical_replicate: string | null;
+  time_status: MeasurementValueStatus;
+  time_value: number | null;
+  time_raw: string | null;
+  measurements: Record<string, TimeSeriesMeasurementValueItem>;
+}
+
+export interface TimeSeriesWorkbookPreview {
+  original_filename: string;
+  effective_dataset_name: string;
+  metadata: Record<string, string | null>;
+  condition_legend: TimeSeriesConditionLegendItem[];
+  measurement_columns: TimeSeriesMeasurementColumnItem[];
+  rows: TimeSeriesDataRowItem[];
+  findings: TimeSeriesFindingItem[];
+}
+
+export interface TimeSeriesDatasetDetail {
+  id: string;
+  dataset_reference_id: string;
+  saved_by: string | null;
+  created_at: string;
+  content: TimeSeriesWorkbookPreview;
+}
+
+export interface TimeSeriesDatasetListItem {
+  id: string;
+  name: string;
+  measurement_type: string | null;
+  organism: string | null;
+  row_count: number;
+  measurement_column_count: number;
+  unresolved_finding_count: number;
+  saved_by: string | null;
+  created_at: string;
+}

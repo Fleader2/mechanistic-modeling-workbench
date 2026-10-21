@@ -19,6 +19,9 @@ import type {
   SubmitModuleSetSimulationRequest,
   SubprojectDetail,
   SubprojectListItem,
+  TimeSeriesDatasetDetail,
+  TimeSeriesDatasetListItem,
+  TimeSeriesWorkbookPreview,
 } from "../types";
 
 const API_BASE_URL: string =
@@ -78,6 +81,52 @@ async function request<T>(
   }
 
   return (await response.json()) as T;
+}
+
+/** Like ``request``, but sends ``formData`` as a real multipart body instead of JSON --
+ * never sets its own Content-Type header, since the browser must set the multipart boundary
+ * itself (time-series dataset workbook upload: preview/save). */
+async function requestFormData<T>(path: string, formData: FormData): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, { method: "POST", body: formData });
+  } catch {
+    throw new ApiRequestError(0, "NETWORK_ERROR", "Could not reach the Workbench API.");
+  }
+
+  if (!response.ok) {
+    const body: ApiErrorBody | null = await response.json().catch(() => null);
+    throw new ApiRequestError(
+      response.status,
+      body?.detail?.code ?? "HTTP_ERROR",
+      body?.detail?.message ?? `Request failed with status ${response.status}.`,
+      (body?.detail?.context as Record<string, unknown> | undefined) ?? null,
+    );
+  }
+
+  return (await response.json()) as T;
+}
+
+/** Fetches the blank template workbook as a ``Blob``, for the caller to trigger a browser
+ * download from (``URL.createObjectURL`` + a synthetic anchor click) -- the one response
+ * shape ``request``/``requestFormData`` don't cover. */
+async function requestBlob(path: string): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`);
+  } catch {
+    throw new ApiRequestError(0, "NETWORK_ERROR", "Could not reach the Workbench API.");
+  }
+  if (!response.ok) {
+    const body: ApiErrorBody | null = await response.json().catch(() => null);
+    throw new ApiRequestError(
+      response.status,
+      body?.detail?.code ?? "HTTP_ERROR",
+      body?.detail?.message ?? `Request failed with status ${response.status}.`,
+      (body?.detail?.context as Record<string, unknown> | undefined) ?? null,
+    );
+  }
+  return await response.blob();
 }
 
 export function listProjects(): Promise<ProjectListItem[]> {
@@ -373,5 +422,65 @@ export function getModuleSetMemberSimulation(
       version,
       memberId,
     )}/simulations/${encodeURIComponent(runId)}`,
+  );
+}
+
+function timeSeriesDatasetsPath(projectId: string, studyId: string): string {
+  return `/api/v1/projects/${encodeURIComponent(projectId)}/subprojects/${encodeURIComponent(
+    studyId,
+  )}/datasets/time-series`;
+}
+
+export async function downloadTimeSeriesDatasetTemplate(
+  projectId: string,
+  studyId: string,
+): Promise<Blob> {
+  return requestBlob(`${timeSeriesDatasetsPath(projectId, studyId)}/template`);
+}
+
+export function previewTimeSeriesDataset(
+  projectId: string,
+  studyId: string,
+  file: File,
+): Promise<TimeSeriesWorkbookPreview> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return requestFormData<TimeSeriesWorkbookPreview>(
+    `${timeSeriesDatasetsPath(projectId, studyId)}/preview`,
+    formData,
+  );
+}
+
+export function saveTimeSeriesDataset(
+  projectId: string,
+  studyId: string,
+  file: File,
+  savedBy?: string,
+): Promise<TimeSeriesDatasetDetail> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (savedBy) {
+    formData.append("saved_by", savedBy);
+  }
+  return requestFormData<TimeSeriesDatasetDetail>(
+    timeSeriesDatasetsPath(projectId, studyId),
+    formData,
+  );
+}
+
+export function listTimeSeriesDatasets(
+  projectId: string,
+  studyId: string,
+): Promise<TimeSeriesDatasetListItem[]> {
+  return request<TimeSeriesDatasetListItem[]>(timeSeriesDatasetsPath(projectId, studyId));
+}
+
+export function getTimeSeriesDataset(
+  projectId: string,
+  studyId: string,
+  datasetId: string,
+): Promise<TimeSeriesDatasetDetail> {
+  return request<TimeSeriesDatasetDetail>(
+    `${timeSeriesDatasetsPath(projectId, studyId)}/${encodeURIComponent(datasetId)}`,
   );
 }

@@ -513,6 +513,64 @@ h1 {
   border-bottom: none;
 }
 
+/* Downloadable Two-Tab Excel Template increment (docs/25). */
+.time-series-preview {
+  margin-top: 16px;
+}
+
+.time-series-metadata-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+}
+
+.time-series-metadata-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding: 8px 10px;
+  width: 220px;
+  text-transform: capitalize;
+}
+
+.time-series-metadata-table td {
+  padding: 8px 10px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.time-series-findings-list {
+  font-size: 13px;
+  margin: 0 0 16px;
+  padding-left: 20px;
+}
+
+.time-series-findings-list li {
+  margin-bottom: 4px;
+}
+
+.time-series-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  overflow-x: auto;
+  display: block;
+}
+
+.time-series-data-table th,
+.time-series-data-table td {
+  padding: 8px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.time-series-data-table th:first-child,
+.time-series-data-table td:first-child {
+  text-align: left;
+}
+
 .module-hierarchy-table {
   width: 100%;
   border-collapse: collapse;

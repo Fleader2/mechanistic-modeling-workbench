@@ -72,12 +72,21 @@ def test_database_url() -> str:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def test_environment(test_database_url: str) -> Iterator[None]:
-    """Point application configuration at the test database for the whole session."""
-    previous = {key: os.environ.get(key) for key in ("DATABASE_URL", "APP_ENV")}
+def test_environment(
+    test_database_url: str, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[None]:
+    """Point application configuration at the test database for the whole session.
+
+    Also redirects ``artifacts_dir`` (``app.storage``'s own durable-file root) to a session-
+    scoped temp directory -- without this, a time-series dataset save during a test run would
+    write real content-addressed ``.xlsx`` blobs straight into this repository's own working
+    directory, not a disposable location.
+    """
+    previous = {key: os.environ.get(key) for key in ("DATABASE_URL", "APP_ENV", "ARTIFACTS_DIR")}
 
     os.environ["DATABASE_URL"] = test_database_url
     os.environ["APP_ENV"] = "test"
+    os.environ["ARTIFACTS_DIR"] = str(tmp_path_factory.mktemp("artifacts"))
 
     get_settings.cache_clear()
     reset_engine()

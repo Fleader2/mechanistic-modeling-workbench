@@ -195,3 +195,55 @@ test("a trailing slash on a module-set-member-execution path is tolerated", () =
     },
   );
 });
+
+test("/projects/<id>/studies/<id2>/datasets/time-series resolves to the time-series-datasets screen", () => {
+  assert.deepEqual(parseRoute("/projects/abc-123/studies/xyz-789/datasets/time-series"), {
+    screen: "time-series-datasets",
+    projectId: "abc-123",
+    studyId: "xyz-789",
+  });
+});
+
+test("a trailing slash on a time-series-datasets path is tolerated", () => {
+  assert.deepEqual(parseRoute("/projects/abc-123/studies/xyz-789/datasets/time-series/"), {
+    screen: "time-series-datasets",
+    projectId: "abc-123",
+    studyId: "xyz-789",
+  });
+});
+
+test("/projects/<id>/studies/<id2>/datasets/time-series/<id3> resolves to the time-series-dataset-detail screen", () => {
+  assert.deepEqual(
+    parseRoute("/projects/abc-123/studies/xyz-789/datasets/time-series/ds-1"),
+    {
+      screen: "time-series-dataset-detail",
+      projectId: "abc-123",
+      studyId: "xyz-789",
+      datasetId: "ds-1",
+    },
+  );
+});
+
+test("a trailing slash on a time-series-dataset-detail path is tolerated", () => {
+  assert.deepEqual(
+    parseRoute("/projects/abc-123/studies/xyz-789/datasets/time-series/ds-1/"),
+    {
+      screen: "time-series-dataset-detail",
+      projectId: "abc-123",
+      studyId: "xyz-789",
+      datasetId: "ds-1",
+    },
+  );
+});
+
+test("URL-encoded ids in a time-series-dataset-detail path are all decoded", () => {
+  assert.deepEqual(
+    parseRoute("/projects/abc%20123/studies/xyz%20789/datasets/time-series/ds%201"),
+    {
+      screen: "time-series-dataset-detail",
+      projectId: "abc 123",
+      studyId: "xyz 789",
+      datasetId: "ds 1",
+    },
+  );
+});

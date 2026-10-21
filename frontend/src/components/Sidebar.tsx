@@ -15,7 +15,7 @@ interface SidebarProps {
   study: SubprojectDetail | null;
 }
 
-const STUDY_SCOPED_DISABLED_ITEMS = ["All datasets", "Runs & Results"];
+const STUDY_SCOPED_DISABLED_ITEMS = ["Runs & Results"];
 
 /** The persistent left sidebar ("Context navigation" in Figma). On the "01
  * — All Projects" screen it shows only "All Projects"; once a project is
@@ -28,15 +28,19 @@ const STUDY_SCOPED_DISABLED_ITEMS = ["All datasets", "Runs & Results"];
  * items -- none of those screens exist yet, so each is disabled, never
  * silently dropped, matching "Modeling Studies"'s own precedent.
  *
- * "All modules" is the one item this increment finally makes real (the
- * Module-Set first increment, `docs/21_module_set_first_increment.md`) --
- * it links to the "06 — All Modules" catalog and is marked active for its
- * whole subtree (the catalog itself, a draft, or a reopened version).
+ * "All modules" is the item the Module-Set first increment made real
+ * (`docs/21_module_set_first_increment.md`) -- it links to the "06 — All
+ * Modules" catalog and is marked active for its whole subtree (the catalog
+ * itself, a draft, or a reopened version). "All datasets" is the item the
+ * Downloadable Two-Tab Excel Template increment makes real the same way
+ * (`docs/25_time_series_dataset_import_increment.md`) -- it links to the
+ * time-series datasets list and is marked active for its own subtree (the
+ * list itself, or a reopened dataset).
  *
  * On a model's own overview ("05 — Model Overview", node 46:564) or any
- * module-set screen, "Study overview" becomes a real link back (not active
- * -- there is no model-list screen between it and this page) and the
- * remaining three items stay disabled. Figma's own prototype instead
+ * module-set/dataset screen, "Study overview" becomes a real link back (not
+ * active -- there is no model-list screen between it and this page) and the
+ * remaining disabled item(s) stay disabled. Figma's own prototype instead
  * highlights "All models" as the active section for a model page -- a
  * deliberate deviation here, since that presumes the "All models" list
  * screen exists as a real navigational step above the model, which this
@@ -53,8 +57,13 @@ export function Sidebar({ route, project, study }: SidebarProps) {
     route.screen === "module-sets" ||
     route.screen === "module-set-draft" ||
     route.screen === "module-set-version";
+  const onTimeSeriesDatasetsSection =
+    route.screen === "time-series-datasets" || route.screen === "time-series-dataset-detail";
   const studyScoped =
-    onStudyDetail || route.screen === "model-detail" || onModuleSetsSection;
+    onStudyDetail ||
+    route.screen === "model-detail" ||
+    onModuleSetsSection ||
+    onTimeSeriesDatasetsSection;
   const projectId = studyScoped ? route.projectId : null;
   const studyId = studyScoped ? route.studyId : null;
 
@@ -124,6 +133,18 @@ export function Sidebar({ route, project, study }: SidebarProps) {
               className="sidebar-nav-item"
             >
               All modules
+            </RouterLink>
+          )}
+          {onTimeSeriesDatasetsSection ? (
+            <span className="sidebar-nav-item active" aria-current="page">
+              All datasets
+            </span>
+          ) : (
+            <RouterLink
+              to={`/projects/${projectId}/studies/${studyId}/datasets/time-series`}
+              className="sidebar-nav-item"
+            >
+              All datasets
             </RouterLink>
           )}
           {STUDY_SCOPED_DISABLED_ITEMS.map((label) => (

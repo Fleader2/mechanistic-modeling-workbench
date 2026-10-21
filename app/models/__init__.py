@@ -49,6 +49,11 @@ from app.models.module_set_execution import ModuleSetMemberBoundaryPort, ModuleS
 from app.models.project import Project
 from app.models.run_record import RunRecord
 from app.models.subproject import Subproject
+from app.models.time_series_dataset import (
+    TimeSeriesDataset,
+    TimeSeriesDatasetRow,
+    TimeSeriesMeasurementColumn,
+)
 from app.models.unit_resolution import UnitResolution
 
 __all__ = [
@@ -87,5 +92,8 @@ __all__ = [
     "Project",
     "RunRecord",
     "Subproject",
+    "TimeSeriesDataset",
+    "TimeSeriesDatasetRow",
+    "TimeSeriesMeasurementColumn",
     "UnitResolution",
 ]

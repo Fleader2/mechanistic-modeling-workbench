@@ -16,15 +16,18 @@ Figma section, are out of scope -- see
 from __future__ import annotations
 
 import json
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, File, Form, UploadFile, status
+from fastapi.responses import Response
 
 from app.api.deps import SessionDep
 from app.api.errors import ApiError
 from app.models.model import Model
 from app.models.module_set import ModuleSetDraft, ModuleSetMember, ModuleSetVersion
 from app.models.subproject import Subproject
+from app.models.time_series_dataset import TimeSeriesDataset
 from app.orchestration.module_set_execution_orchestrator import (
     ModuleSetMemberBoundaryDerivationError,
     derive_boundary_candidates,
@@ -73,6 +76,11 @@ from app.persistence.subproject import (
     get_subproject_for_project,
     list_subprojects,
 )
+from app.persistence.time_series_dataset import (
+    get_time_series_dataset,
+    list_time_series_datasets_for_subproject,
+    persist_time_series_dataset,
+)
 from app.schemas.common import ErrorCode
 from app.schemas.model import ModelDetail, ModelLineage, ModelListItem
 from app.schemas.module_set import (
@@ -95,6 +103,13 @@ from app.schemas.module_set_execution import (
 )
 from app.schemas.project import ProjectDetail, ProjectListItem
 from app.schemas.subproject import SubprojectDetail, SubprojectListItem
+from app.schemas.time_series_dataset import (
+    TimeSeriesDatasetDetail,
+    TimeSeriesDatasetListItem,
+    TimeSeriesWorkbookPreview,
+)
+from app.time_series.parser import WorkbookMalformedError, parse_workbook
+from app.time_series.template import generate_template_workbook
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -191,6 +206,20 @@ def _require_module_set_version_member(
             status_code=status.HTTP_404_NOT_FOUND,
         )
     return member
+
+
+def _require_time_series_dataset(
+    session: SessionDep, subproject_id: UUID, dataset_id: UUID
+) -> TimeSeriesDataset:
+    dataset = get_time_series_dataset(session, dataset_id)
+    if dataset is None or dataset.dataset_reference.subproject_id != subproject_id:
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            f"No time-series dataset exists with id {dataset_id} in Modeling Study "
+            f"{subproject_id}.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return dataset
 
 
 @router.get(
@@ -1079,3 +1108,158 @@ def get_module_set_member_simulation(
             status_code=status.HTTP_404_NOT_FOUND,
         )
     return ModuleSetSimulationRunItem.from_run(run)
+
+
+@router.get(
+    "/{project_id}/subprojects/{subproject_id}/datasets/time-series/template",
+    summary="Download the blank two-tab time-series dataset Excel template",
+    description=(
+        "A generic, reusable .xlsx template (Metadata + Data tabs) -- never populated with "
+        "any project/study-specific content, so this is identical regardless of which "
+        "project/study it is requested under. A 404 for an unknown project/study, matching "
+        "every other route in this file."
+    ),
+)
+def download_time_series_dataset_template(
+    project_id: UUID, subproject_id: UUID, session: SessionDep
+) -> Response:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    return Response(
+        content=generate_template_workbook(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="time_series_dataset_template.xlsx"'
+        },
+    )
+
+
+@router.post(
+    "/{project_id}/subprojects/{subproject_id}/datasets/time-series/preview",
+    response_model=TimeSeriesWorkbookPreview,
+    summary="Parse an uploaded workbook and preview it -- never persisted",
+    description=(
+        "Parses the uploaded .xlsx and returns everything it would import, plus every "
+        "validation finding, without writing anything to the database. A 422 (never a 500, "
+        "never a partial result) if the workbook is malformed -- missing a required sheet, "
+        "no Data-tab header row, no 'time' column, no measurement columns, or a duplicate "
+        "column header -- with every such problem in the error context."
+    ),
+)
+async def preview_time_series_dataset(
+    project_id: UUID,
+    subproject_id: UUID,
+    session: SessionDep,
+    file: Annotated[UploadFile, File()],
+) -> TimeSeriesWorkbookPreview:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    data = await file.read()
+    try:
+        parsed = parse_workbook(data)
+    except WorkbookMalformedError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "This workbook could not be imported.",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            context={
+                "findings": [
+                    {"code": f.code, "severity": f.severity, "message": f.message}
+                    for f in exc.findings
+                ]
+            },
+        ) from exc
+    dataset_name = parsed.metadata.get("dataset_name") or (
+        file.filename.rsplit(".", 1)[0] if file.filename else "untitled"
+    )
+    return TimeSeriesWorkbookPreview.from_parsed(
+        parsed,
+        original_filename=file.filename or "untitled.xlsx",
+        effective_dataset_name=dataset_name,
+    )
+
+
+@router.post(
+    "/{project_id}/subprojects/{subproject_id}/datasets/time-series",
+    response_model=TimeSeriesDatasetDetail,
+    status_code=status.HTTP_201_CREATED,
+    summary="Save an uploaded time-series dataset workbook",
+    description=(
+        "Re-parses and durably persists the uploaded .xlsx -- never trusts a client-side "
+        "echo of a previously-previewed parse. Saving a workbook with unresolved scientific-"
+        "metadata findings is allowed (never blocked merely because the science is "
+        "incomplete); only a malformed workbook (see the preview route) is rejected, with a "
+        "422. Re-saving byte-identical content already saved for this project/name reuses the "
+        "existing dataset rather than duplicating it."
+    ),
+)
+async def save_time_series_dataset(
+    project_id: UUID,
+    subproject_id: UUID,
+    session: SessionDep,
+    file: Annotated[UploadFile, File()],
+    saved_by: Annotated[str | None, Form()] = None,
+) -> TimeSeriesDatasetDetail:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    data = await file.read()
+    try:
+        result = persist_time_series_dataset(
+            session=session,
+            project_id=project_id,
+            subproject_id=subproject_id,
+            original_filename=file.filename or "untitled.xlsx",
+            workbook_bytes=data,
+            saved_by=saved_by,
+        )
+    except WorkbookMalformedError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "This workbook could not be imported.",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            context={
+                "findings": [
+                    {"code": f.code, "severity": f.severity, "message": f.message}
+                    for f in exc.findings
+                ]
+            },
+        ) from exc
+    session.commit()
+    assert result.entity_id is not None
+    dataset = get_time_series_dataset(session, result.entity_id)
+    assert dataset is not None
+    return TimeSeriesDatasetDetail.from_model(dataset)
+
+
+@router.get(
+    "/{project_id}/subprojects/{subproject_id}/datasets/time-series",
+    response_model=list[TimeSeriesDatasetListItem],
+    summary="List every saved time-series dataset for one Modeling Study",
+    description="Newest first. Nothing is ever deleted. A 404 for an unknown project/study.",
+)
+def list_time_series_datasets(
+    project_id: UUID, subproject_id: UUID, session: SessionDep
+) -> list[TimeSeriesDatasetListItem]:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    datasets = list_time_series_datasets_for_subproject(session, subproject_id)
+    return [TimeSeriesDatasetListItem.from_model(d) for d in datasets]
+
+
+@router.get(
+    "/{project_id}/subprojects/{subproject_id}/datasets/time-series/{dataset_id}",
+    response_model=TimeSeriesDatasetDetail,
+    summary="Reopen one saved time-series dataset -- read-only",
+    description=(
+        "Every metadata field, row, and the exact validation findings as saved -- never "
+        "re-parsed or re-derived. A 404 for an unknown dataset, or one belonging to a "
+        "different Modeling Study."
+    ),
+)
+def get_one_time_series_dataset(
+    project_id: UUID, subproject_id: UUID, dataset_id: UUID, session: SessionDep
+) -> TimeSeriesDatasetDetail:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    dataset = _require_time_series_dataset(session, subproject_id, dataset_id)
+    return TimeSeriesDatasetDetail.from_model(dataset)

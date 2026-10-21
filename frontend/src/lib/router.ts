@@ -28,8 +28,19 @@ export type Route =
       moduleSetId: string;
       version: string;
       memberId: string;
+    }
+  | { screen: "time-series-datasets"; projectId: string; studyId: string }
+  | {
+      screen: "time-series-dataset-detail";
+      projectId: string;
+      studyId: string;
+      datasetId: string;
     };
 
+const TIME_SERIES_DATASET_DETAIL_PATH =
+  /^\/projects\/([^/]+)\/studies\/([^/]+)\/datasets\/time-series\/([^/]+)\/?$/;
+const TIME_SERIES_DATASETS_PATH =
+  /^\/projects\/([^/]+)\/studies\/([^/]+)\/datasets\/time-series\/?$/;
 const MODULE_SET_MEMBER_EXECUTION_PATH =
   /^\/projects\/([^/]+)\/studies\/([^/]+)\/module-sets\/([^/]+)\/versions\/([^/]+)\/members\/([^/]+)\/execution\/?$/;
 const MODULE_SET_VERSION_PATH =
@@ -47,6 +58,23 @@ const PROJECT_DETAIL_PATH = /^\/projects\/([^/]+)\/?$/;
  * general-purpose 404 page, only the specific "unknown ..." states handled
  * inside their own screens. */
 export function parseRoute(pathname: string): Route {
+  const datasetDetailMatch = TIME_SERIES_DATASET_DETAIL_PATH.exec(pathname);
+  if (datasetDetailMatch) {
+    return {
+      screen: "time-series-dataset-detail",
+      projectId: decodeURIComponent(datasetDetailMatch[1]),
+      studyId: decodeURIComponent(datasetDetailMatch[2]),
+      datasetId: decodeURIComponent(datasetDetailMatch[3]),
+    };
+  }
+  const datasetsMatch = TIME_SERIES_DATASETS_PATH.exec(pathname);
+  if (datasetsMatch) {
+    return {
+      screen: "time-series-datasets",
+      projectId: decodeURIComponent(datasetsMatch[1]),
+      studyId: decodeURIComponent(datasetsMatch[2]),
+    };
+  }
   const executionMatch = MODULE_SET_MEMBER_EXECUTION_PATH.exec(pathname);
   if (executionMatch) {
     return {

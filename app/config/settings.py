@@ -50,6 +50,17 @@ class Settings(BaseSettings):
     ``CORS_ALLOW_ORIGINS`` environment variable for any other deployment.
     """
 
+    artifacts_dir: str = "artifacts"
+    """Local filesystem directory (relative to the process's own working directory, unless an
+    absolute path is given) this Workbench writes its own durable file artifacts into --
+    currently just ``<artifacts_dir>/datasets/<sha256>.xlsx`` for a saved time-series dataset
+    import (``app.storage``). Mirrors the naming convention the sibling Harness repository
+    already uses for its own transient ``artifacts/runs/``, per ``docs/15_gui_backend
+    _integration_audit.md``'s own suggestion. Local disk is one valid implementation of the
+    Workbench's own existing ``artifact_reference``-as-opaque-string contract -- swapping it
+    for S3-compatible object storage later requires no schema change.
+    """
+
     @property
     def sqlalchemy_url(self) -> str:
         """Database URL with an explicit driver.

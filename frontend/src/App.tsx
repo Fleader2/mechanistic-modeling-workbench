@@ -9,6 +9,8 @@ import { ModuleSetsListScreen } from "./components/ModuleSetsListScreen";
 import { ModuleSetDraftScreen } from "./components/ModuleSetDraftScreen";
 import { ModuleSetVersionScreen } from "./components/ModuleSetVersionScreen";
 import { ModuleSetMemberExecutionScreen } from "./components/ModuleSetMemberExecutionScreen";
+import { TimeSeriesDatasetsListScreen } from "./components/TimeSeriesDatasetsListScreen";
+import { TimeSeriesDatasetDetailScreen } from "./components/TimeSeriesDatasetDetailScreen";
 import { Sidebar } from "./components/Sidebar";
 
 /** App shell: persistent header + left sidebar, matching the Figma file's
@@ -37,6 +39,8 @@ export function App() {
     "module-set-draft",
     "module-set-version",
     "module-set-member-execution",
+    "time-series-datasets",
+    "time-series-dataset-detail",
   ];
   const showProjectMode = studyScopedScreens.includes(route.screen);
   const showStudyScope = route.screen !== "projects" && route.screen !== "project-detail";
@@ -109,6 +113,23 @@ export function App() {
               moduleSetId={route.moduleSetId}
               version={route.version}
               memberId={route.memberId}
+              onProjectChange={handleProjectChange}
+              onStudyChange={handleStudyChange}
+            />
+          )}
+          {route.screen === "time-series-datasets" && (
+            <TimeSeriesDatasetsListScreen
+              projectId={route.projectId}
+              studyId={route.studyId}
+              onProjectChange={handleProjectChange}
+              onStudyChange={handleStudyChange}
+            />
+          )}
+          {route.screen === "time-series-dataset-detail" && (
+            <TimeSeriesDatasetDetailScreen
+              projectId={route.projectId}
+              studyId={route.studyId}
+              datasetId={route.datasetId}
               onProjectChange={handleProjectChange}
               onStudyChange={handleStudyChange}
             />
