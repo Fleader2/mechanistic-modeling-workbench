@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from app.models.enums import SubprojectTaskType
 from app.persistence.subproject import (
     count_subprojects_by_project,
     get_subproject,
+    get_subproject_for_project,
     list_subprojects,
     persist_subproject,
 )
@@ -97,6 +100,39 @@ def test_list_subprojects_returns_only_this_projects_rows_ordered_by_title(db_se
     rows = list_subprojects(db_session, project_id)
 
     assert [row.title for row in rows] == ["aa first", "zz last"]
+
+
+def test_get_subproject_for_project_returns_row_for_its_own_project(db_session):
+    project_id = make_project_id(db_session)
+    study = persist_subproject(
+        project_id=project_id,
+        title="build",
+        task_type=SubprojectTaskType.BUILD_MODEL,
+        session=db_session,
+    )
+
+    row = get_subproject_for_project(db_session, project_id, study.entity_id)
+
+    assert row is not None
+    assert row.id == study.entity_id
+
+
+def test_get_subproject_for_project_returns_none_for_unknown_id(db_session):
+    project_id = make_project_id(db_session)
+    assert get_subproject_for_project(db_session, project_id, uuid.uuid4()) is None
+
+
+def test_get_subproject_for_project_returns_none_for_ownership_mismatch(db_session):
+    owning_project_id = make_project_id(db_session)
+    other_project_id = make_project_id(db_session)
+    study = persist_subproject(
+        project_id=owning_project_id,
+        title="build",
+        task_type=SubprojectTaskType.BUILD_MODEL,
+        session=db_session,
+    )
+
+    assert get_subproject_for_project(db_session, other_project_id, study.entity_id) is None
 
 
 def test_count_subprojects_by_project_empty(db_session):

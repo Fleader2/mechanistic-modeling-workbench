@@ -1,18 +1,21 @@
 import type { SubprojectListItem } from "../types";
 import { NOT_CAPTURED } from "../format";
+import { navigate } from "../lib/router";
+import { RouterLink } from "./RouterLink";
 
 interface ModelingStudiesTableProps {
+  projectId: string;
   studies: SubprojectListItem[];
 }
 
 /** The "Modeling Studies" table on "02 — Current Project" (Figma node
- * 46:203). "Study" cells are deliberately plain text, not a styled link --
- * opening a Modeling Study is out of scope for this increment (see the
- * disclosure note the parent screen renders above this table), and a
- * link-styled but non-functional cell would mislead a user into expecting
- * it to work.
+ * 46:203). "Study" is now a real, accessible link to "03 — Modeling Study"
+ * (`docs/18_modeling_study_increment.md`) -- opening a study is in scope as
+ * of this increment, matching the identical row-click/title-link/
+ * double-click pattern `ProjectsTable` already established for opening a
+ * project.
  */
-export function ModelingStudiesTable({ studies }: ModelingStudiesTableProps) {
+export function ModelingStudiesTable({ projectId, studies }: ModelingStudiesTableProps) {
   return (
     <table className="modeling-studies-table">
       <thead>
@@ -25,8 +28,15 @@ export function ModelingStudiesTable({ studies }: ModelingStudiesTableProps) {
       </thead>
       <tbody>
         {studies.map((study) => (
-          <tr key={study.id}>
-            <td>{study.title}</td>
+          <tr
+            key={study.id}
+            onDoubleClick={() => navigate(`/projects/${projectId}/studies/${study.id}`)}
+          >
+            <td>
+              <RouterLink to={`/projects/${projectId}/studies/${study.id}`} className="project-link">
+                {study.title}
+              </RouterLink>
+            </td>
             <td className={study.objective ? undefined : "not-captured"}>
               {study.objective ?? NOT_CAPTURED}
             </td>

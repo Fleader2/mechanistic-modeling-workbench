@@ -112,6 +112,17 @@ def get_model(session: Session, model_id: UUID) -> Model | None:
     return session.get(Model, model_id)
 
 
+def list_models(session: Session, subproject_id: UUID) -> list[Model]:
+    """Every ``Model`` belonging to one Modeling Study, ordered by name. Read-only."""
+    return list(
+        session.execute(
+            select(Model).where(Model.subproject_id == subproject_id).order_by(Model.name)
+        )
+        .scalars()
+        .all()
+    )
+
+
 def count_models_by_subproject(session: Session) -> dict[UUID, int]:
     """Model count per subproject, in one aggregate query -- never one query
     per subproject (the "Modeling Studies" table's "Models" column).
@@ -125,4 +136,4 @@ def count_models_by_subproject(session: Session) -> dict[UUID, int]:
     return dict(rows)
 
 
-__all__ = ["count_models_by_subproject", "get_model", "persist_model"]
+__all__ = ["count_models_by_subproject", "get_model", "list_models", "persist_model"]

@@ -96,6 +96,22 @@ def get_subproject(session: Session, subproject_id: UUID) -> Subproject | None:
     return session.get(Subproject, subproject_id)
 
 
+def get_subproject_for_project(
+    session: Session, project_id: UUID, subproject_id: UUID
+) -> Subproject | None:
+    """One ``Subproject`` row by id, but only if it belongs to ``project_id``.
+
+    A subproject id that exists but belongs to a *different* project returns
+    ``None`` here, identically to one that does not exist at all -- so the
+    "Modeling Study" detail routes can never be made to leak a study from
+    one project through a different project's URL. Read-only.
+    """
+    subproject = session.get(Subproject, subproject_id)
+    if subproject is None or subproject.project_id != project_id:
+        return None
+    return subproject
+
+
 def list_subprojects(session: Session, project_id: UUID) -> list[Subproject]:
     """Every ``Subproject`` belonging to one project, ordered by title. Read-only."""
     return list(
@@ -122,6 +138,7 @@ def count_subprojects_by_project(session: Session) -> dict[UUID, int]:
 __all__ = [
     "count_subprojects_by_project",
     "get_subproject",
+    "get_subproject_for_project",
     "list_subprojects",
     "persist_subproject",
 ]

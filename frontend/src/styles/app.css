@@ -119,6 +119,20 @@ body {
   font-style: italic;
 }
 
+.sidebar-study-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 4px;
+  padding: 0 8px;
+}
+
+.sidebar-study-scope-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
 .app-content {
   flex: 1;
   padding: 24px 32px 48px;
@@ -342,6 +356,42 @@ h1 {
 
 .modeling-studies-table tbody tr:last-child td {
   border-bottom: none;
+}
+
+.models-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+}
+
+.models-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding: 12px 10px;
+  background: var(--color-bg-page);
+}
+
+.models-table td {
+  padding: 13px 10px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.models-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.model-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-identity-id {
+  font-size: 11px;
+  color: var(--color-text-muted);
 }
 
 .create-project-panel {

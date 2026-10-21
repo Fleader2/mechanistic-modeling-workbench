@@ -29,9 +29,10 @@ interface ProjectDetailScreenProps {
  * 4tLH4HX0rdgPxjpNB1aJOW).
  *
  * In scope: project metadata, its Modeling Studies with per-study model/
- * dataset counts. Out of scope (disabled, never silently dropped): editing
- * the project, opening a Modeling Study, creating a new one. See
- * docs/17_current_project_increment.md.
+ * dataset counts, and opening a Modeling Study (see
+ * docs/18_modeling_study_increment.md). Out of scope (disabled, never
+ * silently dropped): editing the project, creating a new Modeling Study.
+ * See docs/17_current_project_increment.md.
  */
 export function ProjectDetailScreen({ projectId, onProjectChange }: ProjectDetailScreenProps) {
   const [projectState, setProjectState] = useState<ProjectState>({ status: "loading" });
@@ -127,9 +128,6 @@ export function ProjectDetailScreen({ projectId, onProjectChange }: ProjectDetai
       <p className="screen-subtitle">
         Project {project.stable_identifier} · Double-click a Modeling Study to open it.
       </p>
-      <p className="not-available-note">
-        Opening a Modeling Study isn&apos;t available in this increment.
-      </p>
 
       <ProjectInformationCard project={project} />
 
@@ -148,7 +146,7 @@ export function ProjectDetailScreen({ projectId, onProjectChange }: ProjectDetai
           <p className="status-message">No Modeling Studies yet.</p>
         )}
         {studiesState.status === "ready" && studiesState.studies.length > 0 && (
-          <ModelingStudiesTable studies={studiesState.studies} />
+          <ModelingStudiesTable projectId={projectId} studies={studiesState.studies} />
         )}
 
         <button type="button" className="primary-button" disabled title="Not available yet">

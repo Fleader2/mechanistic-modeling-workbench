@@ -1,4 +1,10 @@
-import type { ProjectDetail, ProjectListItem, SubprojectListItem } from "../types";
+import type {
+  ModelListItem,
+  ProjectDetail,
+  ProjectListItem,
+  SubprojectDetail,
+  SubprojectListItem,
+} from "../types";
 
 const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8000";
@@ -55,5 +61,22 @@ export function getProject(projectId: string): Promise<ProjectDetail> {
 export function getProjectSubprojects(projectId: string): Promise<SubprojectListItem[]> {
   return request<SubprojectListItem[]>(
     `/api/v1/projects/${encodeURIComponent(projectId)}/subprojects`,
+  );
+}
+
+export function getModelingStudy(projectId: string, studyId: string): Promise<SubprojectDetail> {
+  return request<SubprojectDetail>(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/subprojects/${encodeURIComponent(studyId)}`,
+  );
+}
+
+export function getModelingStudyModels(
+  projectId: string,
+  studyId: string,
+): Promise<ModelListItem[]> {
+  return request<ModelListItem[]>(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/subprojects/${encodeURIComponent(
+      studyId,
+    )}/models`,
   );
 }

@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from app.models.enums import ModelSourceType, ModelStatus
-from app.persistence.model import count_models_by_subproject, get_model, persist_model
+from app.persistence.model import count_models_by_subproject, get_model, list_models, persist_model
 from app.persistence.types import PersistenceAction
 from tests.persistence.conftest import make_subproject_id
 
@@ -89,6 +89,41 @@ def test_artifact_reference_is_an_opaque_pointer(db_session):
     )
     row = get_model(db_session, result.entity_id)
     assert row.artifact_reference == "harness-run://runs/2026-10-13T00-00-00/stage2_output.json"
+
+
+def test_list_models_empty_for_subproject_with_none(db_session):
+    subproject_id = make_subproject_id(db_session)
+    assert list_models(db_session, subproject_id) == []
+
+
+def test_list_models_returns_only_this_subprojects_rows_ordered_by_name(db_session):
+    subproject_id = make_subproject_id(db_session)
+    other_subproject_id = make_subproject_id(db_session)
+    persist_model(
+        subproject_id=subproject_id,
+        stable_identifier=f"MODEL_{uuid.uuid4().hex[:8]}",
+        name="zz last model",
+        source_type=ModelSourceType.GENERATED,
+        session=db_session,
+    )
+    persist_model(
+        subproject_id=subproject_id,
+        stable_identifier=f"MODEL_{uuid.uuid4().hex[:8]}",
+        name="aa first model",
+        source_type=ModelSourceType.GENERATED,
+        session=db_session,
+    )
+    persist_model(
+        subproject_id=other_subproject_id,
+        stable_identifier=f"MODEL_{uuid.uuid4().hex[:8]}",
+        name="belongs to a different study",
+        source_type=ModelSourceType.GENERATED,
+        session=db_session,
+    )
+
+    rows = list_models(db_session, subproject_id)
+
+    assert [row.name for row in rows] == ["aa first model", "zz last model"]
 
 
 def test_count_models_by_subproject_empty(db_session):
