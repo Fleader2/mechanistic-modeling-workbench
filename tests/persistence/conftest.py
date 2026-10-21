@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import uuid
 
-from app.models.enums import ProjectType, SubprojectTaskType
+from app.models.enums import ModelSourceType, ProjectType, SubprojectTaskType
+from app.persistence.model import persist_model
 from app.persistence.project import persist_project
 from app.persistence.subproject import persist_subproject
 
@@ -31,3 +32,17 @@ def make_subproject_id(db_session, *, project_id=None, **overrides) -> uuid.UUID
     }
     kwargs.update(overrides)
     return persist_subproject(**kwargs).entity_id
+
+
+def make_model_id(db_session, *, subproject_id=None, **overrides) -> uuid.UUID:
+    if subproject_id is None:
+        subproject_id = make_subproject_id(db_session)
+    kwargs = {
+        "subproject_id": subproject_id,
+        "stable_identifier": f"MODEL_{uuid.uuid4().hex[:8]}",
+        "name": f"test-only model {uuid.uuid4().hex[:8]}",
+        "source_type": ModelSourceType.GENERATED,
+        "session": db_session,
+    }
+    kwargs.update(overrides)
+    return persist_model(**kwargs).entity_id

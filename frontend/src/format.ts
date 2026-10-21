@@ -1,4 +1,10 @@
-import type { ModelStatus, ProjectType, SubprojectTaskType, WorkflowLifecycleStatus } from "./types";
+import type {
+  ModelSourceType,
+  ModelStatus,
+  ProjectType,
+  SubprojectTaskType,
+  WorkflowLifecycleStatus,
+} from "./types";
 
 const PROJECT_TYPE_LABELS: Record<ProjectType, string> = {
   MICROBIAL_METABOLISM: "Microbial Metabolism",
@@ -41,6 +47,16 @@ const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
 
 export function formatModelStatus(status: ModelStatus): string {
   return MODEL_STATUS_LABELS[status];
+}
+
+const MODEL_SOURCE_TYPE_LABELS: Record<ModelSourceType, string> = {
+  GENERATED: "Generated",
+  IMPORTED: "Imported",
+  DERIVED: "Derived",
+};
+
+export function formatModelSourceType(sourceType: ModelSourceType): string {
+  return MODEL_SOURCE_TYPE_LABELS[sourceType];
 }
 
 /** The honest placeholder for a Figma field slot with no backend counterpart,

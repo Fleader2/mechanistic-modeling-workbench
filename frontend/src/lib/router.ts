@@ -1,27 +1,39 @@
 // Minimal hand-rolled path router -- no router library exists in this
 // project yet (see docs/16_projects_api_first_increment.md's own "no
-// component library" precedent), and the three routes this app needs
-// (the project list, one project's detail page, and one Modeling Study's
-// detail page) do not justify adding one. `parseRoute` is pure and
-// framework-free specifically so it can be unit-tested without a DOM (see
-// router.test.ts); `navigate`/`useRoute` are the thin browser-integration
-// layer around it, verified live instead.
+// component library" precedent), and the four routes this app needs (the
+// project list, one project's detail page, one Modeling Study's detail
+// page, and one model's overview page) do not justify adding one.
+// `parseRoute` is pure and framework-free specifically so it can be
+// unit-tested without a DOM (see router.test.ts); `navigate`/`useRoute` are
+// the thin browser-integration layer around it, verified live instead.
 import { useEffect, useState } from "react";
 
 export type Route =
   | { screen: "projects" }
   | { screen: "project-detail"; projectId: string }
-  | { screen: "study-detail"; projectId: string; studyId: string };
+  | { screen: "study-detail"; projectId: string; studyId: string }
+  | { screen: "model-detail"; projectId: string; studyId: string; modelId: string };
 
+const MODEL_DETAIL_PATH = /^\/projects\/([^/]+)\/studies\/([^/]+)\/models\/([^/]+)\/?$/;
 const STUDY_DETAIL_PATH = /^\/projects\/([^/]+)\/studies\/([^/]+)\/?$/;
 const PROJECT_DETAIL_PATH = /^\/projects\/([^/]+)\/?$/;
 
 /** Parses a URL pathname into a `Route`. Any path that isn't a recognized
- * project-detail or study-detail path (including `/`, `/projects`, and
- * anything else unrecognized) falls back to the "projects" screen -- this
- * app has no general-purpose 404 page, only the specific "unknown project
- * id" / "unknown Modeling Study" states handled inside their own screens. */
+ * project-detail, study-detail, or model-detail path (including `/`,
+ * `/projects`, and anything else unrecognized) falls back to the
+ * "projects" screen -- this app has no general-purpose 404 page, only the
+ * specific "unknown project id" / "unknown Modeling Study" / "unknown
+ * model" states handled inside their own screens. */
 export function parseRoute(pathname: string): Route {
+  const modelMatch = MODEL_DETAIL_PATH.exec(pathname);
+  if (modelMatch) {
+    return {
+      screen: "model-detail",
+      projectId: decodeURIComponent(modelMatch[1]),
+      studyId: decodeURIComponent(modelMatch[2]),
+      modelId: decodeURIComponent(modelMatch[3]),
+    };
+  }
   const studyMatch = STUDY_DETAIL_PATH.exec(pathname);
   if (studyMatch) {
     return {

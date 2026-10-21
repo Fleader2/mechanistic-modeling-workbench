@@ -7,7 +7,14 @@ import uuid
 import pytest
 
 from app.models.enums import ModelSourceType, ModelStatus
-from app.persistence.model import count_models_by_subproject, get_model, list_models, persist_model
+from app.persistence.model import (
+    count_models_by_subproject,
+    get_model,
+    get_model_for_subproject,
+    list_child_models,
+    list_models,
+    persist_model,
+)
 from app.persistence.types import PersistenceAction
 from tests.persistence.conftest import make_subproject_id
 
@@ -124,6 +131,87 @@ def test_list_models_returns_only_this_subprojects_rows_ordered_by_name(db_sessi
     rows = list_models(db_session, subproject_id)
 
     assert [row.name for row in rows] == ["aa first model", "zz last model"]
+
+
+def test_get_model_for_subproject_returns_row_for_its_own_subproject(db_session):
+    subproject_id = make_subproject_id(db_session)
+    result = persist_model(
+        subproject_id=subproject_id,
+        stable_identifier=f"MODEL_{uuid.uuid4().hex[:8]}",
+        name="model",
+        source_type=ModelSourceType.GENERATED,
+        session=db_session,
+    )
+
+    row = get_model_for_subproject(db_session, subproject_id, result.entity_id)
+
+    assert row is not None
+    assert row.id == result.entity_id
+
+
+def test_get_model_for_subproject_returns_none_for_unknown_id(db_session):
+    subproject_id = make_subproject_id(db_session)
+    assert get_model_for_subproject(db_session, subproject_id, uuid.uuid4()) is None
+
+
+def test_get_model_for_subproject_returns_none_for_ownership_mismatch(db_session):
+    owning_subproject_id = make_subproject_id(db_session)
+    other_subproject_id = make_subproject_id(db_session)
+    result = persist_model(
+        subproject_id=owning_subproject_id,
+        stable_identifier=f"MODEL_{uuid.uuid4().hex[:8]}",
+        name="model",
+        source_type=ModelSourceType.GENERATED,
+        session=db_session,
+    )
+
+    assert get_model_for_subproject(db_session, other_subproject_id, result.entity_id) is None
+
+
+def test_list_child_models_empty_for_model_with_none(db_session):
+    subproject_id = make_subproject_id(db_session)
+    parent = persist_model(
+        subproject_id=subproject_id,
+        stable_identifier=f"MODEL_{uuid.uuid4().hex[:8]}",
+        name="parent",
+        source_type=ModelSourceType.GENERATED,
+        session=db_session,
+    )
+    assert list_child_models(db_session, parent.entity_id) == []
+
+
+def test_list_child_models_returns_children_regardless_of_subproject_ordered_by_name(db_session):
+    subproject_id = make_subproject_id(db_session)
+    other_subproject_id = make_subproject_id(db_session)
+    parent = persist_model(
+        subproject_id=subproject_id,
+        stable_identifier=f"MODEL_{uuid.uuid4().hex[:8]}",
+        name="parent",
+        source_type=ModelSourceType.GENERATED,
+        session=db_session,
+    )
+    persist_model(
+        subproject_id=subproject_id,
+        stable_identifier=f"MODEL_{uuid.uuid4().hex[:8]}",
+        name="zz later child",
+        source_type=ModelSourceType.DERIVED,
+        session=db_session,
+        parent_model_id=parent.entity_id,
+    )
+    persist_model(
+        subproject_id=other_subproject_id,
+        stable_identifier=f"MODEL_{uuid.uuid4().hex[:8]}",
+        name="aa child in a different study",
+        source_type=ModelSourceType.DERIVED,
+        session=db_session,
+        parent_model_id=parent.entity_id,
+    )
+
+    rows = list_child_models(db_session, parent.entity_id)
+
+    # Raw, unscoped truth -- includes the cross-study child. Scoping it out
+    # safely is the API layer's own job (see get_model_lineage_route).
+    assert [row.name for row in rows] == ["aa child in a different study", "zz later child"]
 
 
 def test_count_models_by_subproject_empty(db_session):

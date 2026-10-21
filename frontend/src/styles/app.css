@@ -330,7 +330,76 @@ h1 {
 }
 
 .info-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-top: 4px;
+}
+
+.status-caveat {
+  margin: -8px 0 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.model-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.model-tabs-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-right: 4px;
+}
+
+.model-tab {
+  font-size: 13px;
+  padding: 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.model-tab.active {
+  background: var(--color-bg-surface);
+  font-weight: 600;
+}
+
+.model-tab.disabled {
+  background: var(--color-bg-page);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.lineage-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+}
+
+.lineage-item {
+  margin: 0;
+  font-size: 14px;
+}
+
+.lineage-item a {
+  color: inherit;
+}
+
+.lineage-item.not-captured {
+  color: var(--color-text-muted);
+  font-style: italic;
 }
 
 .modeling-studies-table {

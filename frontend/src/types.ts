@@ -72,6 +72,8 @@ export interface SubprojectDetail {
   updated_at: string;
 }
 
+export type ModelSourceType = "GENERATED" | "IMPORTED" | "DERIVED";
+
 // Mirrors app/schemas/model.py::ModelListItem -- the "03 — Modeling Study"
 // screen's "Models" table. Figma's "Construction" and "Calibration /
 // validation" columns have no backing column and are never invented here.
@@ -81,4 +83,39 @@ export interface ModelListItem {
   name: string;
   version_label: string | null;
   status: ModelStatus;
+}
+
+// Mirrors app/schemas/model.py::ModelDetail -- the "05 — Model Overview"
+// screen. Figma's own reference also shows "Scope" / "Structure" /
+// "Parameters" summary counts and a "Construction: ... Calibration: ...
+// Validation: ..." sentence -- none of that has any backing column anywhere
+// in this schema, and is never invented here; see
+// docs/19_model_overview_increment.md.
+export interface ModelDetail {
+  id: string;
+  subproject_id: string;
+  stable_identifier: string;
+  name: string;
+  source_type: ModelSourceType;
+  status: ModelStatus;
+  artifact_reference: string | null;
+  parent_model_id: string | null;
+  version_label: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Mirrors app/schemas/model.py::ModelLineage -- the "05 — Model Overview"
+// screen's "History" tab. The parent_model_id chain between Model rows is
+// the only version lineage this schema durably records (no fine-grained,
+// per-parameter change-log table exists, unlike Figma's own richer
+// "History" tab mock). A parent/child belonging to a *different* Modeling
+// Study is disclosed via the two out-of-scope fields, never silently
+// dropped or leaked cross-study.
+export interface ModelLineage {
+  parent: ModelListItem | null;
+  parent_out_of_scope: boolean;
+  children: ModelListItem[];
+  children_out_of_scope_count: number;
 }

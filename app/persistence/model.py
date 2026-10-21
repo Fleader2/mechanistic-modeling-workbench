@@ -123,6 +123,40 @@ def list_models(session: Session, subproject_id: UUID) -> list[Model]:
     )
 
 
+def get_model_for_subproject(session: Session, subproject_id: UUID, model_id: UUID) -> Model | None:
+    """One ``Model`` row by id, but only if it belongs to ``subproject_id``.
+
+    A model id that exists but belongs to a *different* subproject returns
+    ``None`` here, identically to one that does not exist at all -- the
+    "Model Overview" route can never be made to leak a model from one
+    Modeling Study through a different study's (or project's) URL.
+    Read-only.
+    """
+    model = session.get(Model, model_id)
+    if model is None or model.subproject_id != subproject_id:
+        return None
+    return model
+
+
+def list_child_models(session: Session, parent_model_id: UUID) -> list[Model]:
+    """Every ``Model`` whose ``parent_model_id`` is this one, ordered by name.
+
+    Returned regardless of which subproject each child itself belongs to --
+    this is the raw, unscoped lineage fact. A caller that must not leak a
+    child belonging to a different Modeling Study (e.g. the "Model Overview"
+    route) filters by ``subproject_id`` itself; see that route's own
+    docstring for why the scoping decision belongs there, not here.
+    Read-only.
+    """
+    return list(
+        session.execute(
+            select(Model).where(Model.parent_model_id == parent_model_id).order_by(Model.name)
+        )
+        .scalars()
+        .all()
+    )
+
+
 def count_models_by_subproject(session: Session) -> dict[UUID, int]:
     """Model count per subproject, in one aggregate query -- never one query
     per subproject (the "Modeling Studies" table's "Models" column).
@@ -136,4 +170,11 @@ def count_models_by_subproject(session: Session) -> dict[UUID, int]:
     return dict(rows)
 
 
-__all__ = ["count_models_by_subproject", "get_model", "list_models", "persist_model"]
+__all__ = [
+    "count_models_by_subproject",
+    "get_model",
+    "get_model_for_subproject",
+    "list_child_models",
+    "list_models",
+    "persist_model",
+]

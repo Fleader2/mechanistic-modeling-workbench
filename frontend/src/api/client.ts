@@ -1,4 +1,6 @@
 import type {
+  ModelDetail,
+  ModelLineage,
   ModelListItem,
   ProjectDetail,
   ProjectListItem,
@@ -79,4 +81,22 @@ export function getModelingStudyModels(
       studyId,
     )}/models`,
   );
+}
+
+function modelPath(projectId: string, studyId: string, modelId: string): string {
+  return `/api/v1/projects/${encodeURIComponent(projectId)}/subprojects/${encodeURIComponent(
+    studyId,
+  )}/models/${encodeURIComponent(modelId)}`;
+}
+
+export function getModel(projectId: string, studyId: string, modelId: string): Promise<ModelDetail> {
+  return request<ModelDetail>(modelPath(projectId, studyId, modelId));
+}
+
+export function getModelLineage(
+  projectId: string,
+  studyId: string,
+  modelId: string,
+): Promise<ModelLineage> {
+  return request<ModelLineage>(`${modelPath(projectId, studyId, modelId)}/lineage`);
 }

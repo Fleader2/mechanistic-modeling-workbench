@@ -46,9 +46,10 @@ interface StudyDetailScreenProps {
  * 4tLH4HX0rdgPxjpNB1aJOW).
  *
  * In scope: the owning project's identity (for the breadcrumb and sidebar),
- * the study's own persisted metadata, and its models. Out of scope
- * (disabled, never silently dropped): editing the study, opening a model,
- * creating a new one. See docs/18_modeling_study_increment.md.
+ * the study's own persisted metadata, its models, and opening a model (see
+ * docs/19_model_overview_increment.md). Out of scope (disabled, never
+ * silently dropped): editing the study, creating a new model. See
+ * docs/18_modeling_study_increment.md.
  *
  * Fetches the project first (so an unknown/mismatched project never fires
  * the study request at all, and so the breadcrumb/sidebar always have a
@@ -240,7 +241,7 @@ export function StudyDetailScreen({
           <p className="status-message">No models yet.</p>
         )}
         {modelsState.status === "ready" && modelsState.models.length > 0 && (
-          <ModelsTable models={modelsState.models} />
+          <ModelsTable projectId={projectId} studyId={studyId} models={modelsState.models} />
         )}
 
         <button type="button" className="primary-button" disabled title="Not available yet">
