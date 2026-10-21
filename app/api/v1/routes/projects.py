@@ -23,8 +23,12 @@ from fastapi import APIRouter, status
 from app.api.deps import SessionDep
 from app.api.errors import ApiError
 from app.models.model import Model
-from app.models.module_set import ModuleSetDraft, ModuleSetVersion
+from app.models.module_set import ModuleSetDraft, ModuleSetMember, ModuleSetVersion
 from app.models.subproject import Subproject
+from app.orchestration.module_set_execution_orchestrator import (
+    ModuleSetMemberBoundaryDerivationError,
+    derive_boundary_candidates,
+)
 from app.persistence.dataset_reference import count_dataset_references_by_subproject
 from app.persistence.model import (
     count_models_by_subproject,
@@ -51,8 +55,19 @@ from app.persistence.module_set import (
     save_draft,
     validate_draft,
 )
+from app.persistence.module_set_execution import (
+    ModuleSetMemberNotReadyError,
+    ModuleSetMemberReviewStaleError,
+    ModuleSetMemberSimulationAlreadyActiveError,
+    evaluate_readiness,
+    get_or_create_review,
+    list_boundary_ports_for_review,
+    list_runs_for_module_set_member,
+    submit_boundary_decision,
+    submit_module_set_simulation,
+)
 from app.persistence.project import get_project, list_projects
-from app.persistence.run_record import list_hierarchical_runs_for_subproject
+from app.persistence.run_record import get_run_record, list_hierarchical_runs_for_subproject
 from app.persistence.subproject import (
     count_subprojects_by_project,
     get_subproject_for_project,
@@ -71,6 +86,12 @@ from app.schemas.module_set import (
     ModuleSetSummary,
     ModuleSetVersionDetail,
     SaveModuleSetDraftRequest,
+)
+from app.schemas.module_set_execution import (
+    ModuleSetMemberReviewDetail,
+    ModuleSetSimulationRunItem,
+    SubmitBoundaryDecisionRequest,
+    SubmitModuleSetSimulationRequest,
 )
 from app.schemas.project import ProjectDetail, ProjectListItem
 from app.schemas.subproject import SubprojectDetail, SubprojectListItem
@@ -151,6 +172,25 @@ def _require_module_set_version(
             status_code=status.HTTP_404_NOT_FOUND,
         )
     return version_row
+
+
+def _require_module_set_version_member(
+    session: SessionDep, subproject_id: UUID, module_set_id: UUID, version: int, member_id: UUID
+) -> ModuleSetMember:
+    """Module-Set Edited-Module Materialization increment: the full Project-Study-Model-
+    SetVersion-Module ownership chain for one member -- ``_require_module_set_version`` already
+    enforces Project/Study/ModuleSet/Version; this adds the final link (the member actually
+    belongs to that exact version)."""
+    version_row = _require_module_set_version(session, subproject_id, module_set_id, version)
+    member = next((m for m in version_row.members if m.id == member_id), None)
+    if member is None:
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            f"No member exists with id {member_id} in version {version} of module set "
+            f"{module_set_id}.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return member
 
 
 @router.get(
@@ -754,3 +794,288 @@ def get_version_member_boundary_ports(
         )
     ports = list_boundary_ports_for_module(session, member.model_module_id)
     return [BoundaryPortItem.from_port(port) for port in ports]
+
+
+# --- Module-Set Edited-Module Materialization increment, Phase B: boundary review, readiness,
+# simulation submission/lifecycle, and results for one saved module-set version's own member.
+# See docs/24_module_set_execution_increment.md.
+
+
+def _review_detail(session: SessionDep, review) -> ModuleSetMemberReviewDetail:
+    ports = list_boundary_ports_for_review(session, review.id)
+    findings = evaluate_readiness(session, review.id)
+    return ModuleSetMemberReviewDetail.from_review(review, ports, findings)
+
+
+@router.post(
+    "/{project_id}/subprojects/{subproject_id}/module-sets/{module_set_id}/versions/{version}"
+    "/members/{member_id}/boundary-review/derive",
+    response_model=ModuleSetMemberReviewDetail,
+    summary="Derive candidate boundary species for one module-set member's own current selection",
+    description=(
+        "Reuses the existing module-boundary-derivation harness contract entirely unmodified "
+        "-- its own structural algorithm reads reaction-participant topology from the rebuilt "
+        "full network, never from a reaction-only attach payload's absent species/parameter "
+        "memberships, so it already works correctly here. Idempotent: an already-known "
+        "candidate (automatic or decided) is never touched. A 404 for an unknown member; a "
+        "422 VALIDATION_ERROR if the harness itself could not be reached or failed."
+    ),
+)
+def derive_module_set_member_boundary_review(
+    project_id: UUID,
+    subproject_id: UUID,
+    module_set_id: UUID,
+    version: int,
+    member_id: UUID,
+    session: SessionDep,
+) -> ModuleSetMemberReviewDetail:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    member = _require_module_set_version_member(
+        session, subproject_id, module_set_id, version, member_id
+    )
+    try:
+        derive_boundary_candidates(
+            module_set_member=member,
+            project_id=project_id,
+            subproject_id=subproject_id,
+            session=session,
+        )
+    except ModuleSetMemberBoundaryDerivationError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR, str(exc), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+        ) from exc
+    session.commit()
+    review = get_or_create_review(session, member.id)
+    return _review_detail(session, review)
+
+
+@router.get(
+    "/{project_id}/subprojects/{subproject_id}/module-sets/{module_set_id}/versions/{version}"
+    "/members/{member_id}/boundary-review",
+    response_model=ModuleSetMemberReviewDetail,
+    summary="Inspect one module-set member's own boundary review and readiness",
+    description=(
+        "Every candidate/decided boundary port for this member's own current reaction "
+        "selection, plus every current blocking readiness finding, computed fresh (never "
+        "cached stale). A 404 for an unknown member."
+    ),
+)
+def get_module_set_member_boundary_review(
+    project_id: UUID,
+    subproject_id: UUID,
+    module_set_id: UUID,
+    version: int,
+    member_id: UUID,
+    session: SessionDep,
+) -> ModuleSetMemberReviewDetail:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    member = _require_module_set_version_member(
+        session, subproject_id, module_set_id, version, member_id
+    )
+    review = get_or_create_review(session, member.id)
+    session.commit()
+    return _review_detail(session, review)
+
+
+@router.post(
+    "/{project_id}/subprojects/{subproject_id}/module-sets/{module_set_id}/versions/{version}"
+    "/members/{member_id}/boundary-review/ports/{port_id}/decision",
+    response_model=ModuleSetMemberReviewDetail,
+    summary="Submit one boundary-treatment decision for a module-set member's own review",
+    description=(
+        "A 404 for an unknown member/port; a 409 if expected_review_version is stale (someone/"
+        "something else acted on this review first); a 422 for UNRESOLVED, or an initial_value "
+        "supplied for a treatment that never uses one."
+    ),
+)
+def submit_module_set_member_boundary_decision(
+    project_id: UUID,
+    subproject_id: UUID,
+    module_set_id: UUID,
+    version: int,
+    member_id: UUID,
+    port_id: UUID,
+    body: SubmitBoundaryDecisionRequest,
+    session: SessionDep,
+) -> ModuleSetMemberReviewDetail:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    member = _require_module_set_version_member(
+        session, subproject_id, module_set_id, version, member_id
+    )
+    port = next(
+        (
+            p
+            for p in list_boundary_ports_for_review(
+                session, get_or_create_review(session, member.id).id
+            )
+            if p.id == port_id
+        ),
+        None,
+    )
+    if port is None:
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            f"No boundary port exists with id {port_id} for member {member_id}.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    try:
+        submit_boundary_decision(
+            port_id=port_id,
+            treatment_type=body.treatment_type,
+            expected_review_version=body.expected_review_version,
+            session=session,
+            initial_value=body.initial_value,
+            unit=body.unit,
+            decided_by=body.decided_by,
+        )
+    except ModuleSetMemberReviewStaleError as exc:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "This member's boundary review was changed since you last loaded it.",
+            status_code=status.HTTP_409_CONFLICT,
+            context={"current_review_version": exc.review.review_version},
+        ) from exc
+    except ValueError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR, str(exc), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+        ) from exc
+    session.commit()
+    review = get_or_create_review(session, member.id)
+    return _review_detail(session, review)
+
+
+@router.post(
+    "/{project_id}/subprojects/{subproject_id}/module-sets/{module_set_id}/versions/{version}"
+    "/members/{member_id}/simulations",
+    response_model=ModuleSetSimulationRunItem,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit a background simulation for one module-set member's own current selection",
+    description=(
+        "Returns immediately with a PENDING run -- the actual Agent 2 rebuild/Agent 3 "
+        "simulation happens later, in the background worker, never holding this request open. "
+        "A 404 for an unknown member; a 409 if expected_review_version is stale, or this "
+        "member already has an active (PENDING/RUNNING) run; a 422 if the member is not ready "
+        "(unresolved boundary ports), with every blocking finding in the error context."
+    ),
+)
+def submit_module_set_member_simulation(
+    project_id: UUID,
+    subproject_id: UUID,
+    module_set_id: UUID,
+    version: int,
+    member_id: UUID,
+    body: SubmitModuleSetSimulationRequest,
+    session: SessionDep,
+) -> ModuleSetSimulationRunItem:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    member = _require_module_set_version_member(
+        session, subproject_id, module_set_id, version, member_id
+    )
+    try:
+        run = submit_module_set_simulation(
+            session=session,
+            module_set_member=member,
+            subproject_id=subproject_id,
+            expected_review_version=body.expected_review_version,
+            solver_settings=body.solver_settings,
+            saved_by=body.saved_by,
+        )
+    except ModuleSetMemberReviewStaleError as exc:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "This member's boundary review was changed since you last loaded it.",
+            status_code=status.HTTP_409_CONFLICT,
+            context={"current_review_version": exc.review.review_version},
+        ) from exc
+    except ModuleSetMemberSimulationAlreadyActiveError as exc:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "This member already has an active simulation run.",
+            status_code=status.HTTP_409_CONFLICT,
+            context={"existing_run_id": str(exc.existing_run.id)},
+        ) from exc
+    except ModuleSetMemberNotReadyError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "This member is not ready to simulate.",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            context={
+                "findings": [
+                    {
+                        "code": f.code,
+                        "message": f.message,
+                        "species_id": f.species_id,
+                        "direction": f.direction,
+                    }
+                    for f in exc.findings
+                ]
+            },
+        ) from exc
+    session.commit()
+    return ModuleSetSimulationRunItem.from_run(run)
+
+
+@router.get(
+    "/{project_id}/subprojects/{subproject_id}/module-sets/{module_set_id}/versions/{version}"
+    "/members/{member_id}/simulations",
+    response_model=list[ModuleSetSimulationRunItem],
+    summary="List every simulation run ever submitted for one module-set member",
+    description=(
+        "Newest first. Nothing is ever deleted -- a failed run remains visible, labeled "
+        "honestly, never silently retried. A 404 for an unknown member."
+    ),
+)
+def list_module_set_member_simulations(
+    project_id: UUID,
+    subproject_id: UUID,
+    module_set_id: UUID,
+    version: int,
+    member_id: UUID,
+    session: SessionDep,
+) -> list[ModuleSetSimulationRunItem]:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    member = _require_module_set_version_member(
+        session, subproject_id, module_set_id, version, member_id
+    )
+    runs = list_runs_for_module_set_member(session, member.id)
+    return [ModuleSetSimulationRunItem.from_run(run) for run in runs]
+
+
+@router.get(
+    "/{project_id}/subprojects/{subproject_id}/module-sets/{module_set_id}/versions/{version}"
+    "/members/{member_id}/simulations/{run_id}",
+    response_model=ModuleSetSimulationRunItem,
+    summary="Reopen one simulation run -- its current status, or its completed result",
+    description=(
+        "The same shape whether PENDING/RUNNING (poll this again later) or SUCCEEDED/FAILED "
+        "(the final result, read back, never rerun). A 404 for an unknown member/run, or a "
+        "run that exists but belongs to a different member."
+    ),
+)
+def get_module_set_member_simulation(
+    project_id: UUID,
+    subproject_id: UUID,
+    module_set_id: UUID,
+    version: int,
+    member_id: UUID,
+    run_id: UUID,
+    session: SessionDep,
+) -> ModuleSetSimulationRunItem:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    member = _require_module_set_version_member(
+        session, subproject_id, module_set_id, version, member_id
+    )
+    run = get_run_record(session, run_id)
+    if run is None or run.module_set_member_id != member.id:
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            f"No simulation run exists with id {run_id} for member {member_id}.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return ModuleSetSimulationRunItem.from_run(run)

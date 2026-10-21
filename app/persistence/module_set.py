@@ -97,6 +97,22 @@ def _encode_ids(ids: list[str]) -> str:
     return json.dumps(sorted(ids))
 
 
+def effective_reaction_component_ids(member: ModuleSetMember | ModuleSetDraftMember) -> list[str]:
+    """This member's own real, current reaction selection, regardless of whether it was ever
+    edited -- ``member.reaction_component_ids`` when set (an edited member, increment 23's own
+    "minimal diff" property), or else derived fresh from its resolved ``ModelModule``'s own
+    ``attach_payload`` (an unedited member, for which that column is ``NULL`` by design, never
+    an empty selection). The one shared, correct version of the "effective ids" logic
+    ``ModuleSetMemberItem.from_member``/``ModuleSetDraftMemberItem.from_draft_member`` already
+    compute inline for display -- used here by the Module-Set Edited-Module Materialization
+    increment wherever a member's real reaction content is needed for a harness call, not just
+    a schema response.
+    """
+    if member.reaction_component_ids is not None:
+        return sorted(json.loads(member.reaction_component_ids))
+    return _derive_reaction_ids(member.model_module)
+
+
 def _decode_ids(encoded: str | None) -> list[str]:
     if encoded is None:
         return []
@@ -598,6 +614,7 @@ __all__ = [
     "create_draft_from_version",
     "discard_draft",
     "edit_draft_member",
+    "effective_reaction_component_ids",
     "get_draft",
     "get_draft_for_subproject",
     "get_module_set",

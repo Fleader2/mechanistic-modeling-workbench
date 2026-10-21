@@ -35,6 +35,11 @@ if TYPE_CHECKING:
     # string).
     from app.models.model_module import ModelModule
 
+    # Module-Set Edited-Module Materialization increment: identical type-checking-only
+    # avoidance of a real circular import (``module_set.py`` itself imports ``ModelModule``,
+    # which imports ``RunRecord``).
+    from app.models.module_set import ModuleSetMember
+
 _RUN_STAGE = Enum(RunStage, name="run_stage", create_type=False)
 _RUN_STATUS = Enum(RunStatus, name="run_status", create_type=False)
 
@@ -77,6 +82,23 @@ class RunRecord(Base):
         ForeignKey("model_module.id", ondelete="RESTRICT", name="fk_run_record_model_module_id_mm"),
         index=True,
     )
+    #: Module-Set Edited-Module Materialization increment: the ``ModuleSetMember`` this run
+    #: simulated -- set only for a module-set-scoped simulation run (``stage=RunStage.AGENT3``,
+    #: Agent 2 rebuild from this member's own current reaction selection, then Agent 3);
+    #: ``NULL`` for every other run, including an ordinary unedited-module simulation (which
+    #: sets ``model_module_id`` alone, exactly as before this increment). A run's
+    #: ``model_module_id`` is still set alongside this for the member's own underlying module,
+    #: for cross-cutting module-level queries -- but only this column distinguishes *which*
+    #: module-set member's own (possibly-edited) selection was actually simulated.
+    module_set_member_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(
+            "module_set_member.id",
+            ondelete="RESTRICT",
+            name="fk_run_record_module_set_member_id_msm",
+        ),
+        index=True,
+    )
 
     stage: Mapped[RunStage] = mapped_column(_RUN_STAGE, nullable=False)
     status: Mapped[RunStatus] = mapped_column(
@@ -117,6 +139,9 @@ class RunRecord(Base):
     model_build_request: Mapped[ModelBuildRequest | None] = relationship()
     model_module: Mapped[ModelModule | None] = relationship(
         foreign_keys="RunRecord.model_module_id"
+    )
+    module_set_member: Mapped[ModuleSetMember | None] = relationship(
+        foreign_keys="RunRecord.module_set_member_id"
     )
 
 

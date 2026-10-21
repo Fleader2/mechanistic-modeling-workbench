@@ -20,8 +20,18 @@ export type Route =
       studyId: string;
       moduleSetId: string;
       version: string;
+    }
+  | {
+      screen: "module-set-member-execution";
+      projectId: string;
+      studyId: string;
+      moduleSetId: string;
+      version: string;
+      memberId: string;
     };
 
+const MODULE_SET_MEMBER_EXECUTION_PATH =
+  /^\/projects\/([^/]+)\/studies\/([^/]+)\/module-sets\/([^/]+)\/versions\/([^/]+)\/members\/([^/]+)\/execution\/?$/;
 const MODULE_SET_VERSION_PATH =
   /^\/projects\/([^/]+)\/studies\/([^/]+)\/module-sets\/([^/]+)\/versions\/([^/]+)\/?$/;
 const MODULE_SET_DRAFT_PATH =
@@ -37,6 +47,17 @@ const PROJECT_DETAIL_PATH = /^\/projects\/([^/]+)\/?$/;
  * general-purpose 404 page, only the specific "unknown ..." states handled
  * inside their own screens. */
 export function parseRoute(pathname: string): Route {
+  const executionMatch = MODULE_SET_MEMBER_EXECUTION_PATH.exec(pathname);
+  if (executionMatch) {
+    return {
+      screen: "module-set-member-execution",
+      projectId: decodeURIComponent(executionMatch[1]),
+      studyId: decodeURIComponent(executionMatch[2]),
+      moduleSetId: decodeURIComponent(executionMatch[3]),
+      version: decodeURIComponent(executionMatch[4]),
+      memberId: decodeURIComponent(executionMatch[5]),
+    };
+  }
   const versionMatch = MODULE_SET_VERSION_PATH.exec(pathname);
   if (versionMatch) {
     return {

@@ -45,6 +45,7 @@ from app.models.module_set import (
     ModuleSetMember,
     ModuleSetVersion,
 )
+from app.models.module_set_execution import ModuleSetMemberBoundaryPort, ModuleSetMemberReview
 from app.models.project import Project
 from app.models.run_record import RunRecord
 from app.models.subproject import Subproject
@@ -80,6 +81,8 @@ __all__ = [
     "ModuleSetDraft",
     "ModuleSetDraftMember",
     "ModuleSetMember",
+    "ModuleSetMemberBoundaryPort",
+    "ModuleSetMemberReview",
     "ModuleSetVersion",
     "Project",
     "RunRecord",

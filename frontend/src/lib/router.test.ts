@@ -159,3 +159,39 @@ test("a nested, unsupported path under a module-set version falls back to the pr
     { screen: "projects" },
   );
 });
+
+test(
+  "/projects/<id>/studies/<id2>/module-sets/<id3>/versions/<n>/members/<id4>/execution " +
+    "resolves to the module-set-member-execution screen",
+  () => {
+    assert.deepEqual(
+      parseRoute(
+        "/projects/abc-123/studies/xyz-789/module-sets/MS-001/versions/2/members/mem-1/execution",
+      ),
+      {
+        screen: "module-set-member-execution",
+        projectId: "abc-123",
+        studyId: "xyz-789",
+        moduleSetId: "MS-001",
+        version: "2",
+        memberId: "mem-1",
+      },
+    );
+  },
+);
+
+test("a trailing slash on a module-set-member-execution path is tolerated", () => {
+  assert.deepEqual(
+    parseRoute(
+      "/projects/abc-123/studies/xyz-789/module-sets/MS-001/versions/2/members/mem-1/execution/",
+    ),
+    {
+      screen: "module-set-member-execution",
+      projectId: "abc-123",
+      studyId: "xyz-789",
+      moduleSetId: "MS-001",
+      version: "2",
+      memberId: "mem-1",
+    },
+  );
+});

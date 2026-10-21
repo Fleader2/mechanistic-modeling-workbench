@@ -8,6 +8,8 @@ import type {
   ModuleSetDraftStatus,
   ModuleSetOriginMethod,
   ProjectType,
+  ReadinessFindingCode,
+  RunStatus,
   SubprojectTaskType,
   WorkflowLifecycleStatus,
 } from "./types";
@@ -128,3 +130,24 @@ export function formatBoundaryResolutionStatus(status: ModuleBoundaryResolutionS
 /** The honest placeholder for a Figma field slot with no backend counterpart,
  * or a real column that happens to be null for this project. Never invented. */
 export const NOT_CAPTURED = "Not captured";
+
+const RUN_STATUS_LABELS: Record<RunStatus, string> = {
+  PENDING: "Pending",
+  RUNNING: "Running",
+  REQUIRES_USER_REVIEW: "Requires user review",
+  SUCCEEDED: "Succeeded",
+  FAILED: "Failed",
+};
+
+export function formatRunStatus(status: RunStatus): string {
+  return RUN_STATUS_LABELS[status];
+}
+
+const READINESS_FINDING_LABELS: Record<ReadinessFindingCode, string> = {
+  UNRESOLVED_BOUNDARY_PORT: "An unresolved boundary port remains",
+  NO_BOUNDARY_PORTS_DERIVED: "No boundary ports have been derived yet",
+};
+
+export function formatReadinessFindingCode(code: ReadinessFindingCode): string {
+  return READINESS_FINDING_LABELS[code];
+}

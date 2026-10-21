@@ -8,6 +8,7 @@ import { ModelOverviewScreen } from "./components/ModelOverviewScreen";
 import { ModuleSetsListScreen } from "./components/ModuleSetsListScreen";
 import { ModuleSetDraftScreen } from "./components/ModuleSetDraftScreen";
 import { ModuleSetVersionScreen } from "./components/ModuleSetVersionScreen";
+import { ModuleSetMemberExecutionScreen } from "./components/ModuleSetMemberExecutionScreen";
 import { Sidebar } from "./components/Sidebar";
 
 /** App shell: persistent header + left sidebar, matching the Figma file's
@@ -35,6 +36,7 @@ export function App() {
     "module-sets",
     "module-set-draft",
     "module-set-version",
+    "module-set-member-execution",
   ];
   const showProjectMode = studyScopedScreens.includes(route.screen);
   const showStudyScope = route.screen !== "projects" && route.screen !== "project-detail";
@@ -96,6 +98,17 @@ export function App() {
               studyId={route.studyId}
               moduleSetId={route.moduleSetId}
               version={route.version}
+              onProjectChange={handleProjectChange}
+              onStudyChange={handleStudyChange}
+            />
+          )}
+          {route.screen === "module-set-member-execution" && (
+            <ModuleSetMemberExecutionScreen
+              projectId={route.projectId}
+              studyId={route.studyId}
+              moduleSetId={route.moduleSetId}
+              version={route.version}
+              memberId={route.memberId}
               onProjectChange={handleProjectChange}
               onStudyChange={handleStudyChange}
             />

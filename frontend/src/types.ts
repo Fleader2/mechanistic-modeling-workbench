@@ -251,3 +251,78 @@ export interface SaveModuleSetDraftRequest {
   version_note?: string;
   saved_by?: string;
 }
+
+// --- Module-Set Edited-Module Materialization increment, Phase B: boundary review,
+// readiness, and simulation for one saved module-set version's own member
+// (docs/24_module_set_execution_increment.md). ---
+
+export type RunStatus = "PENDING" | "RUNNING" | "REQUIRES_USER_REVIEW" | "SUCCEEDED" | "FAILED";
+
+// Mirrors app/schemas/module_set_execution.py::ModuleSetMemberBoundaryPortItem.
+// A genuinely separate, execution-scoped boundary port from `BoundaryPortItem`
+// above (its own table, its own review/decision lifecycle) -- never conflated
+// with the module-level `ModuleBoundaryPort` rows that table mirrors.
+export interface ModuleSetMemberBoundaryPortItem {
+  id: string;
+  species_id: string;
+  direction: ModulePortDirection;
+  treatment_type: ModuleBoundaryTreatmentType;
+  resolution_status: ModuleBoundaryResolutionStatus;
+  initial_value: string | null;
+  unit: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+}
+
+export type ReadinessFindingCode = "UNRESOLVED_BOUNDARY_PORT" | "NO_BOUNDARY_PORTS_DERIVED";
+
+export interface ReadinessFindingItem {
+  code: ReadinessFindingCode;
+  message: string;
+  species_id: string | null;
+  direction: string | null;
+}
+
+// Mirrors app/schemas/module_set_execution.py::ModuleSetMemberReviewDetail.
+// `ready` never claims whole-model coverage or biological validity -- only
+// that every derived candidate has an explicit decision (docs/24's own
+// explicit disclosure).
+export interface ModuleSetMemberReviewDetail {
+  id: string;
+  module_set_member_id: string;
+  review_version: number;
+  derived_at: string | null;
+  ports: ModuleSetMemberBoundaryPortItem[];
+  findings: ReadinessFindingItem[];
+  ready: boolean;
+}
+
+export interface SubmitBoundaryDecisionRequest {
+  expected_review_version: number;
+  treatment_type: ModuleBoundaryTreatmentType;
+  initial_value?: string;
+  unit?: string;
+  decided_by?: string;
+}
+
+export interface SubmitModuleSetSimulationRequest {
+  expected_review_version: number;
+  saved_by?: string;
+}
+
+// Mirrors app/schemas/module_set_execution.py::ModuleSetSimulationRunItem.
+// `module_handoff_summary`/`lineage`/`agent3_report` are present only once
+// the run has reached a terminal status -- labeled explicitly as simulation
+// output, never calibration or validation.
+export interface ModuleSetSimulationRunItem {
+  id: string;
+  status: RunStatus;
+  module_set_member_id: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  result_summary: string | null;
+  error_summary: string | null;
+  module_handoff_summary: Record<string, unknown> | null;
+  lineage: Record<string, unknown> | null;
+  agent3_report: Record<string, unknown> | null;
+}

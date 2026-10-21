@@ -274,6 +274,7 @@ def test_the_workbench_never_parses_or_duplicates_scientific_content(real_run_id
             "model_id",
             "model_build_request_id",
             "model_module_id",
+            "module_set_member_id",
             "stage",
             "status",
             "contract_version",

@@ -267,6 +267,9 @@ export function ModuleSetVersionScreen({
           fetchBoundaryPorts={(memberId) =>
             getVersionMemberBoundaryPorts(projectId, studyId, moduleSetId, version, memberId)
           }
+          executionLinkFor={(memberId) =>
+            `/projects/${projectId}/studies/${studyId}/module-sets/${moduleSetId}/versions/${version}/members/${memberId}/execution`
+          }
         />
       </section>
     </div>

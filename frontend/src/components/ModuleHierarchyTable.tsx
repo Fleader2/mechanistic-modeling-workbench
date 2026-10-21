@@ -8,6 +8,7 @@ import {
   NOT_CAPTURED,
 } from "../format";
 import { ApiRequestError } from "../api/client";
+import { RouterLink } from "./RouterLink";
 
 interface ModuleHierarchyTableProps {
   members: ModuleSetMemberItem[];
@@ -20,6 +21,11 @@ interface ModuleHierarchyTableProps {
     onRename: (memberId: string, displayName: string) => void;
     onMoveReaction: (reactionId: string, toMemberId: string) => void;
   };
+  /** Module-Set Edited-Module Materialization increment (docs/24): when present, renders a
+   * "Review & simulate" link per row to that member's own boundary-review/simulation screen.
+   * Omitted on the draft screen -- a draft member has no execution route at all (drafts live
+   * under a completely separate URL namespace with no boundary-review/simulation routes). */
+  executionLinkFor?: (memberId: string) => string;
 }
 
 type PortsState =
@@ -48,6 +54,7 @@ export function ModuleHierarchyTable({
   members,
   fetchBoundaryPorts,
   editable,
+  executionLinkFor,
 }: ModuleHierarchyTableProps) {
   const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
   const [portsByMember, setPortsByMember] = useState<Record<string, PortsState>>({});
@@ -89,6 +96,7 @@ export function ModuleHierarchyTable({
           <th scope="col">Reactions</th>
           <th scope="col">Execution status</th>
           <th scope="col">Boundary ports</th>
+          {executionLinkFor && <th scope="col">Review &amp; simulate</th>}
         </tr>
       </thead>
       <tbody>
@@ -193,10 +201,17 @@ export function ModuleHierarchyTable({
                     {expandedMemberId === member.id ? "Hide" : "Inspect"}
                   </button>
                 </td>
+                {executionLinkFor && (
+                  <td>
+                    <RouterLink to={executionLinkFor(member.id)} className="secondary-button">
+                      Review &amp; simulate
+                    </RouterLink>
+                  </td>
+                )}
               </tr>
               {expandedMemberId === member.id && (
                 <tr>
-                  <td colSpan={4} className="module-hierarchy-ports-cell">
+                  <td colSpan={executionLinkFor ? 5 : 4} className="module-hierarchy-ports-cell">
                     {portsState?.status === "loading" && (
                       <p className="status-message">Loading boundary ports…</p>
                     )}

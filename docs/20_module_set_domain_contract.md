@@ -1,5 +1,18 @@
 # Module-Set Domain Model and GUI–Backend Contract (Proposal)
 
+**Revision note (third update):** a saved module-set *version*'s own member can now be
+executed -- boundary-reviewed and simulated -- directly, superseding §8/§9 item 8's own
+"a module set never becomes simulatable" claim and the `ModuleSetDraft` section's "can never be
+a target of execution" claim below. Both were true as stated at the time (increments 1-2 never
+built it), not retracted here, but no longer describe the current system. See
+`docs/24_module_set_execution_increment.md` for the full implementation: a **version's**
+member (never a draft's -- a draft remains exactly as inexecutable as this document originally
+said) can be boundary-reviewed and, once ready, submitted for a real, edited-selection-aware
+Agent 2 rematerialization + Agent 3 simulation, persisted as an ordinary `RunRecord` linked back
+by a new `module_set_member_id` column. `ModelModule.run_record_id`/`module_set_version_id`
+(§2.1's blocked schema change) is still never applied -- this increment found, and needed, no
+reason to revisit that block.
+
 **Revision note (second update):** module renaming and reaction-membership editing -- part
 of what this document's original text calls "manual editing," listed throughout as deferred --
 are now implemented. See `docs/23_module_set_manual_editing_increment.md` for the full
@@ -315,7 +328,9 @@ marked via `status`) and is excluded from every normal listing query by default 
 filters `status = OPEN` unless explicitly asked to include discarded ones) — and, as with every
 draft regardless of status, **can never be a target of execution**: no API surface anywhere accepts
 a `module_set_draft_id`/`module_set_draft_member_id` as a simulate/calibrate/validate target (only
-a bare `model_module_id` is ever accepted, unchanged).
+a bare `model_module_id` is ever accepted, unchanged). This still holds exactly as stated after
+the Module-Set Edited-Module Materialization increment (`docs/24`) — only a *saved version's*
+own member gained an execution route; a draft, open or discarded, has none.
 
 ### `ModuleSetDraftMember` — mutable, freely rewritable while the draft is open
 
@@ -689,11 +704,14 @@ identically to one that does not exist at all.
    study or project 404s identically to an unknown id, never leaking which study it actually
    belongs to (same assertion style as `tests/api/test_model_detail.py`'s own ownership-mismatch
    tests in this repository today).
-8. **A module set never becomes simulatable/calibratable/validatable itself.** There is no API
-   surface that accepts a `module_set_version_id` or `module_set_member_id` as a target for
-   `request_module_simulation`/`calibration`/`validation` — every such call still takes a bare
-   `model_module_id`, confirming module sets remain a pure curation/versioning layer, never a
-   second execution entrypoint.
+8. **A module set never becomes simulatable/calibratable/validatable itself -- true through
+   increment 2, superseded for simulation by increment 3 (`docs/24`).** `request_module_
+   simulation`/calibration/validation still only ever accept a bare `model_module_id`, so a
+   module set is still never a second entrypoint into *those* functions. But `docs/24` adds a
+   genuinely new, separate simulation pathway scoped to a saved version's own member
+   (`module_set_member_id` on `RunRecord`, gated by its own boundary-review/readiness state) --
+   so "a module set never becomes simulatable itself" no longer holds without qualification;
+   read it now as "never through the pre-existing module-level entrypoints."
 9. *(For a later slice, once lineage editing exists)* **A split/merge always produces a new
    `module_identity_id` for its result(s), never reuses the predecessor's.** A plain rename or
    membership-preserving move never creates a `ModuleLineageEdge` row.
@@ -704,5 +722,8 @@ identically to one that does not exist at all.
 resolved. The first implementation increment built against this revised contract is reported in
 `docs/21_module_set_first_increment.md`. The second increment -- module renaming and
 reaction-membership editing, still never touching the `ModelModule` schema change -- is reported
-in `docs/23_module_set_manual_editing_increment.md`. Split/merge and per-member origin tracking
-remain deferred.
+in `docs/23_module_set_manual_editing_increment.md`. The third increment -- boundary review and
+simulation for a saved version's own (possibly edited) member, via a real Agent 2
+rematerialization + Agent 3 round trip -- is reported in
+`docs/24_module_set_execution_increment.md`. Split/merge and per-member origin tracking remain
+deferred.

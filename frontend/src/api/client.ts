@@ -8,11 +8,15 @@ import type {
   ModuleSetDraftDetail,
   ModuleSetDraftValidationFindingItem,
   ModuleSetDraftValidationResult,
+  ModuleSetMemberReviewDetail,
+  ModuleSetSimulationRunItem,
   ModuleSetSummary,
   ModuleSetVersionDetail,
   ProjectDetail,
   ProjectListItem,
   SaveModuleSetDraftRequest,
+  SubmitBoundaryDecisionRequest,
+  SubmitModuleSetSimulationRequest,
   SubprojectDetail,
   SubprojectListItem,
 } from "../types";
@@ -264,5 +268,110 @@ export function getVersionMemberBoundaryPorts(
     )}/versions/${encodeURIComponent(version)}/members/${encodeURIComponent(
       memberId,
     )}/boundary-ports`,
+  );
+}
+
+// --- Module-Set Edited-Module Materialization increment, Phase B (docs/24) ---
+
+function moduleSetMemberPath(
+  projectId: string,
+  studyId: string,
+  moduleSetId: string,
+  version: string,
+  memberId: string,
+): string {
+  return `${studyPath(projectId, studyId)}/module-sets/${encodeURIComponent(
+    moduleSetId,
+  )}/versions/${encodeURIComponent(version)}/members/${encodeURIComponent(memberId)}`;
+}
+
+export function deriveModuleSetMemberBoundaryReview(
+  projectId: string,
+  studyId: string,
+  moduleSetId: string,
+  version: string,
+  memberId: string,
+): Promise<ModuleSetMemberReviewDetail> {
+  return request<ModuleSetMemberReviewDetail>(
+    `${moduleSetMemberPath(projectId, studyId, moduleSetId, version, memberId)}/boundary-review/derive`,
+    { method: "POST" },
+  );
+}
+
+export function getModuleSetMemberBoundaryReview(
+  projectId: string,
+  studyId: string,
+  moduleSetId: string,
+  version: string,
+  memberId: string,
+): Promise<ModuleSetMemberReviewDetail> {
+  return request<ModuleSetMemberReviewDetail>(
+    `${moduleSetMemberPath(projectId, studyId, moduleSetId, version, memberId)}/boundary-review`,
+  );
+}
+
+export function submitModuleSetMemberBoundaryDecision(
+  projectId: string,
+  studyId: string,
+  moduleSetId: string,
+  version: string,
+  memberId: string,
+  portId: string,
+  body: SubmitBoundaryDecisionRequest,
+): Promise<ModuleSetMemberReviewDetail> {
+  return request<ModuleSetMemberReviewDetail>(
+    `${moduleSetMemberPath(
+      projectId,
+      studyId,
+      moduleSetId,
+      version,
+      memberId,
+    )}/boundary-review/ports/${encodeURIComponent(portId)}/decision`,
+    { method: "POST", body },
+  );
+}
+
+export function submitModuleSetMemberSimulation(
+  projectId: string,
+  studyId: string,
+  moduleSetId: string,
+  version: string,
+  memberId: string,
+  body: SubmitModuleSetSimulationRequest,
+): Promise<ModuleSetSimulationRunItem> {
+  return request<ModuleSetSimulationRunItem>(
+    `${moduleSetMemberPath(projectId, studyId, moduleSetId, version, memberId)}/simulations`,
+    { method: "POST", body },
+  );
+}
+
+export function listModuleSetMemberSimulations(
+  projectId: string,
+  studyId: string,
+  moduleSetId: string,
+  version: string,
+  memberId: string,
+): Promise<ModuleSetSimulationRunItem[]> {
+  return request<ModuleSetSimulationRunItem[]>(
+    `${moduleSetMemberPath(projectId, studyId, moduleSetId, version, memberId)}/simulations`,
+  );
+}
+
+export function getModuleSetMemberSimulation(
+  projectId: string,
+  studyId: string,
+  moduleSetId: string,
+  version: string,
+  memberId: string,
+  runId: string,
+): Promise<ModuleSetSimulationRunItem> {
+  return request<ModuleSetSimulationRunItem>(
+    `${moduleSetMemberPath(
+      projectId,
+      studyId,
+      moduleSetId,
+      version,
+      memberId,
+    )}/simulations/${encodeURIComponent(runId)}`,
   );
 }
