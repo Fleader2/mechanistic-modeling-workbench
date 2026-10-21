@@ -221,9 +221,9 @@ it; the same 404/422 cases).
 
 ## Live browser verification
 
-Node, the backend (`uvicorn`, port 8000, `APP_ENV=test`), and the frontend (`vite dev`, port 5173)
-were brought up exactly as in prior increments' own sessions, reusing the same isolated,
-never-committed `verify-tools/` scratch Playwright project.
+Node, the backend (`uvicorn`, port 8000), and the frontend (`vite dev`, port 5173) were brought up
+exactly as in prior increments' own sessions, reusing the same isolated, never-committed
+`verify-tools/` scratch Playwright project.
 
 A one-off scratch seed script (`seed_model_overview_verification.py`) seeded, inside one Modeling
 Study ("ACC1 perturbation"): a four-model lineage chain (`MOD-000` draft → `MOD-001` "Curated
@@ -231,6 +231,16 @@ fatty acid model," the model opened → `MOD-002` a later revision), one isolate
 lineage, no version label, no artifact reference, and no notes (`MOD-003`), and -- in a
 *different* Modeling Study of the same project ("Carbon allocation") -- a model whose own parent
 is `MOD-001` (`MOD-900`), for the cross-study lineage-disclosure and ownership-mismatch checks.
+
+**Database-identity correction (added by `docs/22_database_configuration_and_verification
+_safety.md`).** This section originally claimed `uvicorn` ran with `APP_ENV=test`, implying it
+was pointed at a disposable database. It was not: `APP_ENV=test` has no effect on which database
+the application connects to, so this session actually ran against the real development database.
+This screen's own navigation flow was re-verified against the actual test database
+(`workbench_test`, confirmed disposable by `scripts/db_safety.py::require_disposable_database`
+before seeding) and renders identically -- heading, subtitle, both lineage entries (earlier and
+later version, each with the correct "Not captured" fields), and the cross-study
+lineage-disclosure note all reproduced exactly. Only the database-identity claim was wrong.
 
 A throwaway Playwright script (`verify_model_overview.mjs`) drove a real Chromium browser against
 the real running servers. One script-ordering mistake was caught and fixed during this session

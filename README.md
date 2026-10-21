@@ -180,6 +180,14 @@ ruff format --check .
 uvicorn app.main:app --reload
 ```
 
+`alembic upgrade head` must be re-run against `DATABASE_URL`'s own database every time new
+migrations are pulled -- `pytest` migrates the *test* database automatically every session, but
+nothing does this for the one `uvicorn` actually serves. **`APP_ENV` has no effect on which
+database the application connects to; only `DATABASE_URL` does.** See
+`docs/22_database_configuration_and_verification_safety.md` for the incident this note exists to
+prevent, and `scripts/db_safety.py::require_disposable_database` for a guard any one-off
+seed/verification script should open with.
+
 ### Frontend (`frontend/`)
 
 ```bash

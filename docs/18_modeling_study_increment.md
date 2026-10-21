@@ -180,17 +180,28 @@ column (unlike `Project`, which does). The implemented subtitle is "Modeling Stu
 
 ## Live browser verification
 
-Node, the backend (`uvicorn`, port 8000, `APP_ENV=test`), and the frontend (`vite dev`, port 5173)
-were brought up exactly as in `docs/16`/`docs/17`'s own sessions, reusing the same isolated,
-never-committed `verify-tools/` scratch Playwright project (Chromium already installed from the
-prior session's manual extraction; no reinstall needed).
+Node, the backend (`uvicorn`, port 8000), and the frontend (`vite dev`, port 5173) were brought up
+exactly as in `docs/16`/`docs/17`'s own sessions, reusing the same isolated, never-committed
+`verify-tools/` scratch Playwright project (Chromium already installed from the prior session's
+manual extraction; no reinstall needed).
 
-A one-off scratch seed script (`seed_modeling_study_verification.py`, not part of the repository;
-safe because the test database is reset by the next `pytest` run) seeded: "Yeast Fatty Acid
-Engineering" with an "ACC1 perturbation" study (objective, notes, three models -- two with
-version labels and an `ACTIVE` status, one deliberately with no version label and a `DRAFT`
-status) and a "Reference reconstruction" study (deliberately no objective/notes, zero models); and
-"EGFR Drug Response" with an "Erlotinib response" study (the ownership-mismatch target).
+A one-off scratch seed script (`seed_modeling_study_verification.py`, not part of the repository)
+seeded: "Yeast Fatty Acid Engineering" with an "ACC1 perturbation" study (objective, notes, three
+models -- two with version labels and an `ACTIVE` status, one deliberately with no version label
+and a `DRAFT` status) and a "Reference reconstruction" study (deliberately no objective/notes,
+zero models); and "EGFR Drug Response" with an "Erlotinib response" study (the
+ownership-mismatch target).
+
+**Database-identity correction (added by `docs/22_database_configuration_and_verification
+_safety.md`).** This section originally claimed `uvicorn` ran with `APP_ENV=test` and that
+seeding was "safe because the test database is reset by the next `pytest` run" -- implying it
+ran against a disposable database. It did not: `APP_ENV=test` has no effect on which database
+the application connects to, so this session actually ran against the real development database.
+This screen's own navigation flow was re-verified against the actual test database
+(`workbench_test`, confirmed disposable by `scripts/db_safety.py::require_disposable_database`
+before seeding) and renders identically -- heading, breadcrumb, the three model rows with their
+exact version/status values, and the ownership-mismatch 404 all reproduced exactly. Only the
+database-identity claim was wrong.
 
 A throwaway Playwright script (`verify_modeling_study.mjs`, in the same scratch `verify-tools/`
 project) drove a real Chromium browser against the real running servers. Every observed result

@@ -182,14 +182,25 @@ the repository root with `.venv` active:
 - `ruff check .` -> "All checks passed!"
 - `ruff format --check .` -> "146 files already formatted."
 
-**Live verification data.** Four projects were seeded directly against the *test* database
-(`TEST_DATABASE_URL`, with `APP_ENV=test`) via a one-off scratch script, matching the Figma
-mockup's example data for recognizability: `PRJ-001` Yeast Fatty Acid Engineering (4 studies),
-`PRJ-002` EGFR Drug Response (3), `PRJ-003` Central Carbon Reconstruction (2), and `PRJ-004`
-Unlabeled New Project (0 studies, no `biological_context_summary`, deliberately included to
-exercise the zero-count and "Not captured" paths). This is safe because the test database is
-reset by the next `pytest` run (`tests/conftest.py::reset_test_database`); nothing was written to
-the real development database. The script itself was not added to the repository.
+**Live verification data.** Four projects were seeded, matching the Figma mockup's example data
+for recognizability: `PRJ-001` Yeast Fatty Acid Engineering (4 studies), `PRJ-002` EGFR Drug
+Response (3), `PRJ-003` Central Carbon Reconstruction (2), and `PRJ-004` Unlabeled New Project (0
+studies, no `biological_context_summary`, deliberately included to exercise the zero-count and
+"Not captured" paths). The script itself was not added to the repository.
+
+**Database-identity correction (added by `docs/22_database_configuration_and_verification
+_safety.md`).** This section originally claimed the seed script ran "against the *test* database
+(`TEST_DATABASE_URL`, with `APP_ENV=test`)" and that nothing was written to the real development
+database. That claim was wrong: `APP_ENV=test` has no effect anywhere on which database the
+application connects to -- only overriding `DATABASE_URL` itself does -- so this session's
+`uvicorn`/seed script actually ran against the real development database (`workbench`), not a
+disposable one. `docs/22` has the full root-cause explanation, the resulting audit of
+`workbench`'s state, and a guard (`scripts/db_safety.py::require_disposable_database`) that now
+makes this mistake impossible to repeat silently. The application behavior this section
+describes was re-verified against the actual test database (`workbench_test`, confirmed
+disposable by that guard before seeding) and renders identically -- every row in the table below
+was reproduced exactly. Only this section's database-identity claim was wrong; nothing about the
+frontend or backend behavior it documents needed correcting.
 
 **Browser verification.** No browser-automation tool was available to Claude directly in this
 session, and the one Figma tool that can capture a live localhost page writes into the Figma

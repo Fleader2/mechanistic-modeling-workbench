@@ -147,15 +147,24 @@ empty cell.
 
 ## Live browser verification
 
-Node, the backend (`uvicorn`, port 8000, pointed at the test database with `APP_ENV=test`), and
-the frontend (`vite dev`, port 5173) were brought up exactly as in `docs/16`'s own session. Four
-projects were seeded directly against the *test* database via a one-off scratch script (not part
-of the repository; safe because the test database is reset by the next `pytest` run --
-`tests/conftest.py::reset_test_database`): "Yeast Fatty Acid Engineering" with three Modeling
-Studies (one with 3 models/4 datasets, one with 2 models/0 datasets, one with neither and no
-objective), plus one dataset reference scoped only to the project itself (no `subproject_id`);
-"EGFR Drug Response" with zero studies; and two more projects reused from `docs/16`'s own seed for
-the All Projects screen's continued correctness.
+Node, the backend (`uvicorn`, port 8000) and the frontend (`vite dev`, port 5173) were brought up
+exactly as in `docs/16`'s own session. Four projects were seeded via a one-off scratch script
+(not part of the repository): "Yeast Fatty Acid Engineering" with three Modeling Studies (one
+with 3 models/4 datasets, one with 2 models/0 datasets, one with neither and no objective), plus
+one dataset reference scoped only to the project itself (no `subproject_id`); "EGFR Drug
+Response" with zero studies; and two more projects reused from `docs/16`'s own seed for the All
+Projects screen's continued correctness.
+
+**Database-identity correction (added by `docs/22_database_configuration_and_verification
+_safety.md`).** This section originally claimed `uvicorn` was "pointed at the test database with
+`APP_ENV=test`" and that seeding was "directly against the *test* database." Both claims were
+wrong, for the same reason given in `docs/16`'s own correction above: `APP_ENV=test` does not
+redirect the application to any database; only overriding `DATABASE_URL` does, and this session
+did not do that, so it actually ran against the real development database. This screen's own
+navigation flow was re-verified against the actual test database (`workbench_test`, confirmed
+disposable by `scripts/db_safety.py::require_disposable_database` before seeding) and renders
+identically -- heading, the three Modeling Studies rows, their model/dataset counts, and the
+"Not captured" paths all reproduced exactly. Only the database-identity claim was wrong.
 
 A throwaway Playwright script (`verify_current_project.mjs`, in the same isolated, never-committed
 `verify-tools/` scratch project `docs/16` already set up -- not a new tool, reused as-is) drove a
