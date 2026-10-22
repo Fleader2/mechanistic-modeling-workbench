@@ -31,6 +31,7 @@ from app.contracts.harness import CONTRACT_VERSION, SUPPORTED_ENTRY_STAGE, Harne
 from app.models.enums import ModelSourceType, ProjectType, RunStatus, SubprojectTaskType
 from app.models.model import Model
 from app.models.model_build_request import ModelBuildRequest
+from app.models.model_species_catalog import ModelSpeciesCatalog
 from app.models.project import Project
 from app.models.run_record import RunRecord
 from app.models.subproject import Subproject
@@ -63,6 +64,21 @@ _EXPECTED_STAGES = (
 
 
 def _delete_recursively(session: Session, project_id, subproject_id) -> None:
+    # Model-Species Catalog Prerequisite increment: a ModelSpeciesCatalog row RESTRICTs
+    # deletion of the RunRecord it was captured from -- deleted first so the run_record
+    # deletes below never hit that constraint.
+    model_ids = [
+        row[0]
+        for row in session.query(Model.id).filter_by(subproject_id=subproject_id).all()
+    ]
+    if model_ids:
+        for catalog in (
+            session.query(ModelSpeciesCatalog)
+            .filter(ModelSpeciesCatalog.model_id.in_(model_ids))
+            .all()
+        ):
+            session.delete(catalog)
+        session.flush()
     for run_record in session.query(RunRecord).filter_by(subproject_id=subproject_id).all():
         session.delete(run_record)
     session.flush()

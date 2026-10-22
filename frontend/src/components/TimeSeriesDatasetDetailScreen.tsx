@@ -2,13 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import {
   ApiRequestError,
   getModelingStudy,
+  getModelingStudyModels,
   getProject,
   getTimeSeriesDataset,
 } from "../api/client";
 import { createStaleGuard } from "../lib/staleGuard";
+import { navigate } from "../lib/router";
 import { NOT_CAPTURED } from "../format";
 import { RouterLink } from "./RouterLink";
-import type { ProjectDetail, SubprojectDetail, TimeSeriesDatasetDetail } from "../types";
+import type {
+  ModelListItem,
+  ProjectDetail,
+  SubprojectDetail,
+  TimeSeriesDatasetDetail,
+} from "../types";
 
 type ProjectState =
   | { status: "loading" }
@@ -49,6 +56,8 @@ export function TimeSeriesDatasetDetailScreen({
   const [projectState, setProjectState] = useState<ProjectState>({ status: "loading" });
   const [studyState, setStudyState] = useState<StudyState>({ status: "loading" });
   const [datasetState, setDatasetState] = useState<DatasetState>({ status: "loading" });
+  const [models, setModels] = useState<ModelListItem[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState("");
   const guard = useRef(createStaleGuard<string>()).current;
 
   useEffect(() => {
@@ -70,6 +79,15 @@ export function TimeSeriesDatasetDetailScreen({
           if (!guard.isCurrent(key)) return;
           setStudyState({ status: "ready", study });
           onStudyChange(study);
+
+          getModelingStudyModels(projectId, studyId)
+            .then((list) => {
+              if (guard.isCurrent(key)) setModels(list);
+            })
+            .catch(() => {
+              /* the "map to a model" picker is a convenience; its own load failure never
+               * blocks the read-only reopen screen above it */
+            });
 
           getTimeSeriesDataset(projectId, studyId, datasetId)
             .then((dataset) => {
@@ -190,6 +208,45 @@ export function TimeSeriesDatasetDetailScreen({
         Saved {new Date(dataset.created_at).toLocaleString()}
         {dataset.saved_by ? ` by ${dataset.saved_by}` : ""} · read-only.
       </p>
+
+      <section className="card" aria-label="Map to a model">
+        <h2>Map to a model</h2>
+        {models.length === 0 ? (
+          <p className="status-message">
+            No models exist in this Modeling Study yet to map against.
+          </p>
+        ) : (
+          <p>
+            <label htmlFor="alias-mapping-model-select">Model</label>
+            <br />
+            <select
+              id="alias-mapping-model-select"
+              value={selectedModelId}
+              onChange={(event) => setSelectedModelId(event.target.value)}
+            >
+              <option value="">Choose a model…</option>
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name} ({model.stable_identifier})
+                </option>
+              ))}
+            </select>{" "}
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={!selectedModelId}
+              onClick={() =>
+                navigate(
+                  `/projects/${projectId}/studies/${studyId}/datasets/time-series/${datasetId}` +
+                    `/alias-mapping/${selectedModelId}`,
+                )
+              }
+            >
+              Map measurement columns
+            </button>
+          </p>
+        )}
+      </section>
 
       <section className="card" aria-label="Metadata">
         <h2>Metadata</h2>

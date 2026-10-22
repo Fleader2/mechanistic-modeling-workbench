@@ -1,4 +1,6 @@
 import type {
+  AliasMappingDetail,
+  AliasMappingRevisionSummary,
   BoundaryPortItem,
   EditModuleSetDraftMemberRequest,
   HierarchicalRunSummary,
@@ -14,6 +16,7 @@ import type {
   ModuleSetVersionDetail,
   ProjectDetail,
   ProjectListItem,
+  SaveAliasMappingRequest,
   SaveModuleSetDraftRequest,
   SubmitBoundaryDecisionRequest,
   SubmitModuleSetSimulationRequest,
@@ -482,5 +485,61 @@ export function getTimeSeriesDataset(
 ): Promise<TimeSeriesDatasetDetail> {
   return request<TimeSeriesDatasetDetail>(
     `${timeSeriesDatasetsPath(projectId, studyId)}/${encodeURIComponent(datasetId)}`,
+  );
+}
+
+function aliasMappingPath(
+  projectId: string,
+  studyId: string,
+  datasetId: string,
+  modelId: string,
+): string {
+  return `${timeSeriesDatasetsPath(projectId, studyId)}/${encodeURIComponent(
+    datasetId,
+  )}/alias-mapping/${encodeURIComponent(modelId)}`;
+}
+
+export function getCurrentAliasMapping(
+  projectId: string,
+  studyId: string,
+  datasetId: string,
+  modelId: string,
+): Promise<AliasMappingDetail> {
+  return request<AliasMappingDetail>(aliasMappingPath(projectId, studyId, datasetId, modelId));
+}
+
+export function saveAliasMapping(
+  projectId: string,
+  studyId: string,
+  datasetId: string,
+  modelId: string,
+  body: SaveAliasMappingRequest,
+): Promise<AliasMappingDetail> {
+  return request<AliasMappingDetail>(aliasMappingPath(projectId, studyId, datasetId, modelId), {
+    method: "POST",
+    body,
+  });
+}
+
+export function listAliasMappingRevisions(
+  projectId: string,
+  studyId: string,
+  datasetId: string,
+  modelId: string,
+): Promise<AliasMappingRevisionSummary[]> {
+  return request<AliasMappingRevisionSummary[]>(
+    `${aliasMappingPath(projectId, studyId, datasetId, modelId)}/revisions`,
+  );
+}
+
+export function getAliasMappingRevision(
+  projectId: string,
+  studyId: string,
+  datasetId: string,
+  modelId: string,
+  revisionNumber: number,
+): Promise<AliasMappingDetail> {
+  return request<AliasMappingDetail>(
+    `${aliasMappingPath(projectId, studyId, datasetId, modelId)}/revisions/${revisionNumber}`,
   );
 }

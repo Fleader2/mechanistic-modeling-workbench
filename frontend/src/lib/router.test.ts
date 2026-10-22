@@ -247,3 +247,53 @@ test("URL-encoded ids in a time-series-dataset-detail path are all decoded", () 
     },
   );
 });
+
+test("/projects/<id>/studies/<id2>/datasets/time-series/<id3>/alias-mapping/<id4> resolves to the dataset-model-alias-mapping screen", () => {
+  assert.deepEqual(
+    parseRoute("/projects/abc-123/studies/xyz-789/datasets/time-series/ds-1/alias-mapping/mod-1"),
+    {
+      screen: "dataset-model-alias-mapping",
+      projectId: "abc-123",
+      studyId: "xyz-789",
+      datasetId: "ds-1",
+      modelId: "mod-1",
+    },
+  );
+});
+
+test("a trailing slash on a dataset-model-alias-mapping path is tolerated", () => {
+  assert.deepEqual(
+    parseRoute(
+      "/projects/abc-123/studies/xyz-789/datasets/time-series/ds-1/alias-mapping/mod-1/",
+    ),
+    {
+      screen: "dataset-model-alias-mapping",
+      projectId: "abc-123",
+      studyId: "xyz-789",
+      datasetId: "ds-1",
+      modelId: "mod-1",
+    },
+  );
+});
+
+test("URL-encoded ids in a dataset-model-alias-mapping path are all decoded", () => {
+  assert.deepEqual(
+    parseRoute(
+      "/projects/abc%20123/studies/xyz%20789/datasets/time-series/ds%201/alias-mapping/mod%201",
+    ),
+    {
+      screen: "dataset-model-alias-mapping",
+      projectId: "abc 123",
+      studyId: "xyz 789",
+      datasetId: "ds 1",
+      modelId: "mod 1",
+    },
+  );
+});
+
+test("a dataset-model-alias-mapping path never matches the shorter time-series-dataset-detail route", () => {
+  const route = parseRoute(
+    "/projects/abc-123/studies/xyz-789/datasets/time-series/ds-1/alias-mapping/mod-1",
+  );
+  assert.notEqual(route.screen, "time-series-dataset-detail");
+});

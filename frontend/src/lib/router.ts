@@ -35,8 +35,17 @@ export type Route =
       projectId: string;
       studyId: string;
       datasetId: string;
+    }
+  | {
+      screen: "dataset-model-alias-mapping";
+      projectId: string;
+      studyId: string;
+      datasetId: string;
+      modelId: string;
     };
 
+const ALIAS_MAPPING_PATH =
+  /^\/projects\/([^/]+)\/studies\/([^/]+)\/datasets\/time-series\/([^/]+)\/alias-mapping\/([^/]+)\/?$/;
 const TIME_SERIES_DATASET_DETAIL_PATH =
   /^\/projects\/([^/]+)\/studies\/([^/]+)\/datasets\/time-series\/([^/]+)\/?$/;
 const TIME_SERIES_DATASETS_PATH =
@@ -58,6 +67,16 @@ const PROJECT_DETAIL_PATH = /^\/projects\/([^/]+)\/?$/;
  * general-purpose 404 page, only the specific "unknown ..." states handled
  * inside their own screens. */
 export function parseRoute(pathname: string): Route {
+  const aliasMappingMatch = ALIAS_MAPPING_PATH.exec(pathname);
+  if (aliasMappingMatch) {
+    return {
+      screen: "dataset-model-alias-mapping",
+      projectId: decodeURIComponent(aliasMappingMatch[1]),
+      studyId: decodeURIComponent(aliasMappingMatch[2]),
+      datasetId: decodeURIComponent(aliasMappingMatch[3]),
+      modelId: decodeURIComponent(aliasMappingMatch[4]),
+    };
+  }
   const datasetDetailMatch = TIME_SERIES_DATASET_DETAIL_PATH.exec(pathname);
   if (datasetDetailMatch) {
     return {

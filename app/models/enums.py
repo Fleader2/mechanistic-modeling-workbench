@@ -407,6 +407,73 @@ class MeasurementValueStatus(StrEnum):
     UNRECOGNIZED = "UNRECOGNIZED"
 
 
+class ModelSpeciesCatalogStatus(StrEnum):
+    """Whether a durable, whole-model species/compartment catalog is actually available for a
+    ``Model`` row, for `app.models.model_species_catalog.ModelSpeciesCatalog.status` (Model-
+    Species Catalog Prerequisite increment, ``docs/26``).
+
+    No row at all means "never attempted" -- treated identically to ``UNAVAILABLE`` by every
+    reader (never silently treated as a valid, empty catalog). ``AVAILABLE`` means capture
+    genuinely succeeded: every ``ModelSpeciesCatalog.species``/``compartments`` row was
+    verified, via a real Antimony/RoadRunner load, to actually exist in the compiled model --
+    never merely present in Agent 2's own structural network. ``UNAVAILABLE`` is an explicit,
+    disclosed failure (``unavailable_reason`` always set) -- a capture failure never leaves a
+    model silently treated as mapping-ready, and is never a reason to simulate, guess, or
+    substitute a module's own (structurally different, never a whole model's) snapshot.
+    """
+
+    AVAILABLE = "AVAILABLE"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class ModelSpeciesKind(StrEnum):
+    """A real, compiled species' own RoadRunner-reported kind -- ``getFloatingSpeciesIds``
+    versus ``getBoundarySpeciesIds`` -- for
+    `app.models.model_species_catalog.ModelSpecies.kind`. Both are genuine, addressable species
+    in the compiled model; neither is ever omitted from a catalog on this distinction alone."""
+
+    FLOATING = "FLOATING"
+    BOUNDARY = "BOUNDARY"
+
+
+class AliasMappingAssignmentStatus(StrEnum):
+    """One measurement column's own status within a single dataset<->model-version alias-
+    mapping revision (`app.models.dataset_model_alias_mapping.DatasetModelAliasMappingAssignment
+    .status`), for the model-specific alias-mapping increment (``docs/27``).
+
+    Three genuinely different claims, never conflated: ``ASSIGNED`` (this column's data *is*
+    the named real species -- ``target_antimony_species_id`` always set); ``SKIPPED`` (a
+    deliberate, explicit decision that this column has no species home -- never re-offered as
+    if undecided); ``UNRESOLVED`` (the default for a column no one has decided about yet --
+    task instructions: "allow incomplete mappings to be saved with explicit unresolved
+    status"). Every measurement column of a dataset gets exactly one row with one of these
+    three statuses in every revision -- never silently omitted.
+    """
+
+    ASSIGNED = "ASSIGNED"
+    SKIPPED = "SKIPPED"
+    UNRESOLVED = "UNRESOLVED"
+
+
+class AliasMappingUnitFinding(StrEnum):
+    """The outcome of comparing one ``ASSIGNED`` column's own declared unit against its target
+    species' own unit (``app.units.compare_units``, task instructions: "use existing units
+    machinery to distinguish compatible, incompatible, and unknown units ... never silently
+    convert values") -- ``None`` only when the assignment itself is not ``ASSIGNED`` (nothing
+    to compare against).
+
+    ``UNKNOWN`` collapses ``app.units.UnitComparisonStatus``'s own ``MISSING``/``MALFORMED``
+    (either side absent, or present but unparseable) -- both mean "cannot tell," the one
+    distinction task instructions actually asked for; the full ``compare_units`` result is
+    still retained verbatim alongside, never discarded, for anyone who needs the finer
+    distinction.
+    """
+
+    COMPATIBLE = "COMPATIBLE"
+    INCOMPATIBLE = "INCOMPATIBLE"
+    UNKNOWN = "UNKNOWN"
+
+
 class ModuleSetOriginMethod(StrEnum):
     """How one ``ModuleSetVersion`` (or, while open, ``ModuleSetDraft``) came to have its own
     content (Module-Set Domain Model increment, ``docs/20_module_set_domain_contract.md``).
@@ -448,6 +515,8 @@ class ModuleSetDraftStatus(StrEnum):
 
 
 __all__ = [
+    "AliasMappingAssignmentStatus",
+    "AliasMappingUnitFinding",
     "ConfidenceClass",
     "CrossModuleDiagnosticCategory",
     "DiagnosticReviewStatus",
@@ -461,6 +530,8 @@ __all__ = [
     "ModelBuildRequestSpeciesRole",
     "ModelModuleExecutionStatus",
     "ModelSourceType",
+    "ModelSpeciesCatalogStatus",
+    "ModelSpeciesKind",
     "ModelStatus",
     "ModelingDecisionResolutionSource",
     "ModelingDecisionStatus",

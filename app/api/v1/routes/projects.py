@@ -32,6 +32,18 @@ from app.orchestration.module_set_execution_orchestrator import (
     ModuleSetMemberBoundaryDerivationError,
     derive_boundary_candidates,
 )
+from app.persistence.dataset_model_alias_mapping import (
+    AssignmentInput,
+    DuplicateMappingTargetError,
+    InvalidMappingColumnError,
+    InvalidMappingTargetError,
+    MappingRevisionStaleError,
+    MappingSpeciesCatalogUnavailableError,
+    get_current_mapping_revision,
+    get_mapping_revision,
+    list_mapping_revisions,
+    save_mapping_revision,
+)
 from app.persistence.dataset_reference import count_dataset_references_by_subproject
 from app.persistence.model import (
     count_models_by_subproject,
@@ -41,6 +53,7 @@ from app.persistence.model import (
     list_models,
 )
 from app.persistence.model_module import count_model_modules_by_run
+from app.persistence.model_species_catalog import get_model_species_catalog
 from app.persistence.module_boundary_port import list_boundary_ports_for_module
 from app.persistence.module_set import (
     ModuleSetDraftAlreadyResolved,
@@ -82,6 +95,11 @@ from app.persistence.time_series_dataset import (
     persist_time_series_dataset,
 )
 from app.schemas.common import ErrorCode
+from app.schemas.dataset_model_alias_mapping import (
+    AliasMappingDetail,
+    AliasMappingRevisionSummary,
+    SaveAliasMappingRequest,
+)
 from app.schemas.model import ModelDetail, ModelLineage, ModelListItem
 from app.schemas.module_set import (
     BoundaryPortItem,
@@ -1263,3 +1281,197 @@ def get_one_time_series_dataset(
     _require_modeling_study(session, project_id, subproject_id)
     dataset = _require_time_series_dataset(session, subproject_id, dataset_id)
     return TimeSeriesDatasetDetail.from_model(dataset)
+
+
+@router.get(
+    "/{project_id}/subprojects/{subproject_id}/datasets/time-series/{dataset_id}"
+    "/alias-mapping/{model_id}",
+    response_model=AliasMappingDetail,
+    summary="The current alias-mapping revision for one (dataset, model) pair",
+    description=(
+        "The current (highest-revision-number) mapping, or an all-UNRESOLVED/never-saved "
+        "state if none exists yet -- plus the model's own verified species catalog (empty, "
+        "with a disclosed reason, if the catalog is UNAVAILABLE) and every measurement "
+        "column's own source identity. A 404 for an unknown dataset or model, or either "
+        "belonging to a different Modeling Study."
+    ),
+)
+def get_current_alias_mapping(
+    project_id: UUID, subproject_id: UUID, dataset_id: UUID, model_id: UUID, session: SessionDep
+) -> AliasMappingDetail:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    dataset = _require_time_series_dataset(session, subproject_id, dataset_id)
+    _require_model(session, subproject_id, model_id)
+    catalog = get_model_species_catalog(session, model_id)
+    revision = get_current_mapping_revision(
+        session, time_series_dataset_id=dataset_id, model_id=model_id
+    )
+    return AliasMappingDetail.build(
+        dataset=dataset, model_id=model_id, catalog=catalog, revision=revision
+    )
+
+
+@router.post(
+    "/{project_id}/subprojects/{subproject_id}/datasets/time-series/{dataset_id}"
+    "/alias-mapping/{model_id}",
+    response_model=AliasMappingDetail,
+    status_code=status.HTTP_201_CREATED,
+    summary="Save a new alias-mapping revision for one (dataset, model) pair",
+    description=(
+        "Always creates a new, immutable revision -- never edits one in place. A 409 if "
+        "expected_revision_number is stale (someone/something else saved a newer revision "
+        "first) or the model's own species catalog is not AVAILABLE; a 422 for an unknown "
+        "column name, a target id that is not a real species in the verified catalog, or two "
+        "columns assigned to the identical target (never silently combined)."
+    ),
+)
+def save_alias_mapping(
+    project_id: UUID,
+    subproject_id: UUID,
+    dataset_id: UUID,
+    model_id: UUID,
+    body: SaveAliasMappingRequest,
+    session: SessionDep,
+) -> AliasMappingDetail:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    dataset = _require_time_series_dataset(session, subproject_id, dataset_id)
+    _require_model(session, subproject_id, model_id)
+    catalog = get_model_species_catalog(session, model_id)
+    if catalog is None:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "This model has no species catalog at all -- it was never captured during a real "
+            "model build, so no alias mapping can be validated or saved against it.",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    try:
+        revision = save_mapping_revision(
+            session=session,
+            dataset=dataset,
+            model_species_catalog=catalog,
+            assignments=[
+                AssignmentInput(
+                    column_name=a.column_name,
+                    status=a.status,
+                    target_antimony_species_id=a.target_antimony_species_id,
+                )
+                for a in body.assignments
+            ],
+            expected_revision_number=body.expected_revision_number,
+            saved_by=body.saved_by,
+        )
+    except MappingSpeciesCatalogUnavailableError as exc:
+        raise ApiError(
+            ErrorCode.CONFLICT, str(exc), status_code=status.HTTP_409_CONFLICT
+        ) from exc
+    except MappingRevisionStaleError as exc:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "This mapping was changed since you last loaded it.",
+            status_code=status.HTTP_409_CONFLICT,
+            context={
+                "current_revision_number": (
+                    0
+                    if exc.current_revision is None
+                    else exc.current_revision.revision_number
+                )
+            },
+        ) from exc
+    except InvalidMappingColumnError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "One or more assignments name a column that is not a real measurement column of "
+            "this dataset.",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            context={"unknown_column_names": exc.unknown_column_names},
+        ) from exc
+    except InvalidMappingTargetError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "One or more assignments name a species id that is not a real species in this "
+            "model's own verified catalog.",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            context={"invalid_target_ids": exc.invalid_target_ids},
+        ) from exc
+    except DuplicateMappingTargetError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "More than one column is assigned to the identical target species -- never "
+            "silently combined.",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            context={"conflicts": exc.conflicts},
+        ) from exc
+    session.commit()
+    dataset = _require_time_series_dataset(session, subproject_id, dataset_id)
+    return AliasMappingDetail.build(
+        dataset=dataset, model_id=model_id, catalog=catalog, revision=revision
+    )
+
+
+@router.get(
+    "/{project_id}/subprojects/{subproject_id}/datasets/time-series/{dataset_id}"
+    "/alias-mapping/{model_id}/revisions",
+    response_model=list[AliasMappingRevisionSummary],
+    summary="Every alias-mapping revision ever saved for one (dataset, model) pair",
+    description="Newest first. Nothing is ever deleted. A 404 for an unknown dataset or model.",
+)
+def list_alias_mapping_revisions(
+    project_id: UUID, subproject_id: UUID, dataset_id: UUID, model_id: UUID, session: SessionDep
+) -> list[AliasMappingRevisionSummary]:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    _require_time_series_dataset(session, subproject_id, dataset_id)
+    _require_model(session, subproject_id, model_id)
+    revisions = list_mapping_revisions(
+        session, time_series_dataset_id=dataset_id, model_id=model_id
+    )
+    return [AliasMappingRevisionSummary.from_revision(r) for r in revisions]
+
+
+@router.get(
+    "/{project_id}/subprojects/{subproject_id}/datasets/time-series/{dataset_id}"
+    "/alias-mapping/{model_id}/revisions/{revision_number}",
+    response_model=AliasMappingDetail,
+    summary="Reopen one specific, historical alias-mapping revision -- read-only",
+    description=(
+        "Exactly as saved, never re-validated or re-derived against the model's own current "
+        "species catalog. A 404 for an unknown dataset/model/revision number."
+    ),
+)
+def get_one_alias_mapping_revision(
+    project_id: UUID,
+    subproject_id: UUID,
+    dataset_id: UUID,
+    model_id: UUID,
+    revision_number: int,
+    session: SessionDep,
+) -> AliasMappingDetail:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    dataset = _require_time_series_dataset(session, subproject_id, dataset_id)
+    _require_model(session, subproject_id, model_id)
+    revision = get_mapping_revision(
+        session,
+        time_series_dataset_id=dataset_id,
+        model_id=model_id,
+        revision_number=revision_number,
+    )
+    if revision is None:
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            f"No alias-mapping revision {revision_number} exists for dataset {dataset_id} "
+            f"and model {model_id}.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    # The exact catalog this revision was actually validated against at save time -- never
+    # "whatever is current now" (catalogs are immutable and 1:1 with a model today, so these
+    # are the same row in practice, but reopening a historical revision should never depend on
+    # that happening to still be true).
+    return AliasMappingDetail.build(
+        dataset=dataset,
+        model_id=model_id,
+        catalog=revision.model_species_catalog,
+        revision=revision,
+    )

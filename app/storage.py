@@ -28,17 +28,32 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def save_dataset_workbook(data: bytes) -> tuple[str, str]:
-    """Write ``data`` to ``<artifacts_dir>/datasets/<sha256>.xlsx`` (a no-op if that exact
+def save_blob(data: bytes, *, subdir: str, suffix: str) -> tuple[str, str]:
+    """Write ``data`` to ``<artifacts_dir>/<subdir>/<sha256><suffix>`` (a no-op if that exact
     content is already on file) and return ``(artifact_reference, checksum)``. Always safe to
-    call more than once with identical bytes."""
+    call more than once with identical bytes -- the one, shared content-addressing primitive
+    every durable-file-artifact increment in this repository builds on."""
     checksum = sha256_hex(data)
-    directory = _artifacts_root() / "datasets"
+    directory = _artifacts_root() / subdir
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{checksum}.xlsx"
+    path = directory / f"{checksum}{suffix}"
     if not path.is_file():
         path.write_bytes(data)
     return str(path), checksum
+
+
+def save_dataset_workbook(data: bytes) -> tuple[str, str]:
+    """Write ``data`` to ``<artifacts_dir>/datasets/<sha256>.xlsx``. See ``save_blob``."""
+    return save_blob(data, subdir="datasets", suffix=".xlsx")
+
+
+def save_model_antimony_text(antimony_text: str) -> tuple[str, str]:
+    """Write ``antimony_text`` to ``<artifacts_dir>/models/<sha256>.antimony`` (utf-8) -- the
+    Model-Species Catalog Prerequisite increment's own durable retention of the authoritative
+    source artifact a captured catalog was verified against, per ``app.storage``'s own existing
+    convention (Downloadable Two-Tab Excel Template increment) rather than relying on the
+    harness's own transient, gitignored run-output directory. See ``save_blob``."""
+    return save_blob(antimony_text.encode("utf-8"), subdir="models", suffix=".antimony")
 
 
 def read_artifact(artifact_reference: str) -> bytes:
@@ -46,4 +61,10 @@ def read_artifact(artifact_reference: str) -> bytes:
     return Path(artifact_reference).read_bytes()
 
 
-__all__ = ["read_artifact", "save_dataset_workbook", "sha256_hex"]
+__all__ = [
+    "read_artifact",
+    "save_blob",
+    "save_dataset_workbook",
+    "save_model_antimony_text",
+    "sha256_hex",
+]

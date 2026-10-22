@@ -15,6 +15,10 @@ a copied identifier, never a constraint-enforced relationship.
 
 from app.db.base import Base
 from app.models.cross_module_diagnostic import CrossModuleDiagnostic, CrossModuleDiagnosticRun
+from app.models.dataset_model_alias_mapping import (
+    DatasetModelAliasMappingAssignment,
+    DatasetModelAliasMappingRevision,
+)
 from app.models.dataset_reference import DatasetReference
 from app.models.hierarchy_checkpoint import HierarchyCheckpoint
 from app.models.hierarchy_node import HierarchyNode
@@ -34,6 +38,7 @@ from app.models.model_build_request import (
     ModelBuildRequestSpecies,
 )
 from app.models.model_module import ModelModule
+from app.models.model_species_catalog import ModelCompartment, ModelSpecies, ModelSpeciesCatalog
 from app.models.modeling_decision import ModelingDecision, ModelingDecisionOption
 from app.models.module_aggregate import ModuleAggregate
 from app.models.module_boundary_port import ModuleBoundaryPort
@@ -60,6 +65,8 @@ __all__ = [
     "Base",
     "CrossModuleDiagnostic",
     "CrossModuleDiagnosticRun",
+    "DatasetModelAliasMappingAssignment",
+    "DatasetModelAliasMappingRevision",
     "DatasetReference",
     "HierarchyCheckpoint",
     "HierarchyNode",
@@ -76,7 +83,10 @@ __all__ = [
     "ModelBuildRequestReaction",
     "ModelBuildRequestRegulatoryInteraction",
     "ModelBuildRequestSpecies",
+    "ModelCompartment",
     "ModelModule",
+    "ModelSpecies",
+    "ModelSpeciesCatalog",
     "ModelingDecision",
     "ModelingDecisionOption",
     "ModuleAggregate",

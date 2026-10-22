@@ -15,6 +15,14 @@ or repairs anything an agent produced. It only moves a ``RunRecord``
 through its own state machine and copies opaque artifact-reference
 strings -- never parsed scientific content -- onto it (and onto the
 associated ``Model`` row, when one is given and the run succeeded).
+
+**Model-Species Catalog Prerequisite increment**: a successful, model-scoped run also triggers
+``app.orchestration.model_species_catalog_orchestrator.capture_model_species_catalog`` --
+the one place this module's own "never parsed scientific content" discipline is deliberately
+narrowed, since durably capturing a real, verified species catalog (never guessed, never
+inferred from a module snapshot) is exactly what makes alias mapping against this model
+possible without ever running a simulation. That function never raises; a capture failure is
+always disclosed as an explicit ``UNAVAILABLE`` catalog row, never an aborted build.
 """
 
 from __future__ import annotations
@@ -37,6 +45,7 @@ from app.contracts.harness import (
 from app.models.enums import RunStage, RunStatus
 from app.models.model import Model
 from app.orchestration.harness_client import invoke_harness
+from app.orchestration.model_species_catalog_orchestrator import capture_model_species_catalog
 from app.persistence.model_build_request import get_model_build_request
 from app.persistence.run_record import complete_run, create_run_record, get_run_record, start_run
 
@@ -190,6 +199,12 @@ def submit_subproject_run(
             if model_row is not None:
                 model_row.artifact_reference = result.model_artifact_reference
                 session.flush()
+                capture_model_species_catalog(
+                    session,
+                    model_id=model_id,
+                    run_record_id=run_record.id,
+                    agent2_assembly_path=result.model_artifact_reference,
+                )
         return updated
 
     error_message = result.summary if result.error is None else result.error.message

@@ -407,3 +407,65 @@ export interface TimeSeriesDatasetListItem {
   saved_by: string | null;
   created_at: string;
 }
+
+// Mirrors app/schemas/dataset_model_alias_mapping.py (Model-Specific Alias Mapping increment).
+// See docs/27_model_specific_alias_mapping_increment.md.
+
+export type AliasMappingAssignmentStatus = "ASSIGNED" | "SKIPPED" | "UNRESOLVED";
+export type AliasMappingUnitFinding = "COMPATIBLE" | "INCOMPATIBLE" | "UNKNOWN";
+export type ModelSpeciesCatalogStatus = "AVAILABLE" | "UNAVAILABLE";
+
+export interface AliasMappingSpeciesOption {
+  antimony_species_id: string;
+  display_name: string | null;
+  compartment_id: string;
+  compartment_name: string | null;
+}
+
+export interface AliasMappingColumnInfo {
+  column_name: string;
+  unit: string | null;
+  sample_values: string[];
+}
+
+export interface AliasMappingAssignmentItem {
+  column_name: string;
+  status: AliasMappingAssignmentStatus;
+  target_antimony_species_id: string | null;
+  unit_finding: AliasMappingUnitFinding | null;
+  unit_comparison_detail: Record<string, unknown> | null;
+}
+
+export interface AliasMappingRevisionSummary {
+  revision_number: number;
+  saved_by: string | null;
+  created_at: string;
+  assigned_count: number;
+  skipped_count: number;
+  unresolved_count: number;
+}
+
+export interface AliasMappingDetail {
+  time_series_dataset_id: string;
+  model_id: string;
+  model_species_catalog_status: ModelSpeciesCatalogStatus | null;
+  model_species_catalog_unavailable_reason: string | null;
+  available_species: AliasMappingSpeciesOption[];
+  columns: AliasMappingColumnInfo[];
+  revision_number: number;
+  saved_by: string | null;
+  created_at: string | null;
+  assignments: AliasMappingAssignmentItem[];
+}
+
+export interface SaveAliasMappingAssignmentRequest {
+  column_name: string;
+  status: AliasMappingAssignmentStatus;
+  target_antimony_species_id?: string | null;
+}
+
+export interface SaveAliasMappingRequest {
+  expected_revision_number: number;
+  assignments: SaveAliasMappingAssignmentRequest[];
+  saved_by?: string | null;
+}
