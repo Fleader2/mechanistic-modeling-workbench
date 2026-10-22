@@ -571,6 +571,124 @@ h1 {
   text-align: left;
 }
 
+/* Read-Only Dataset Inspection and Time-Series Plotting increment (docs/28). */
+.alias-mapping-overlay {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+  font-size: 13px;
+}
+
+.time-series-plot-controls {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+}
+
+.time-series-plot-controls legend {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+  padding: 0 4px;
+}
+
+.time-series-plot-control-item {
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.time-series-plot-panel {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: var(--color-bg-surface);
+}
+
+.time-series-plot-svg-wrapper {
+  position: relative;
+}
+
+.time-series-plot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.time-series-plot-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.time-series-plot-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.time-series-plot-legend-unit {
+  color: var(--color-text-secondary);
+  margin-left: auto;
+}
+
+.time-series-plot-axis {
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+
+.time-series-plot-axis-label {
+  font-size: 9px;
+  fill: var(--color-text-secondary);
+}
+
+.time-series-plot-line {
+  opacity: 0.7;
+}
+
+.time-series-plot-point {
+  cursor: pointer;
+}
+
+.time-series-plot-point:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.time-series-plot-tooltip {
+  position: absolute;
+  transform: translate(-50%, -110%);
+  background: var(--color-text-primary);
+  color: var(--color-bg-surface);
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 6px 8px;
+  border-radius: 4px;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.time-series-plot-exclusions {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin: 8px 0 0;
+  padding-left: 16px;
+}
+
 .module-hierarchy-table {
   width: 100%;
   border-collapse: collapse;

@@ -378,12 +378,18 @@ export interface TimeSeriesDataRowItem {
   measurements: Record<string, TimeSeriesMeasurementValueItem>;
 }
 
+export interface TimeSeriesUnitPanelGroup {
+  column_names: string[];
+  shared_unit: string | null;
+}
+
 export interface TimeSeriesWorkbookPreview {
   original_filename: string;
   effective_dataset_name: string;
   metadata: Record<string, string | null>;
   condition_legend: TimeSeriesConditionLegendItem[];
   measurement_columns: TimeSeriesMeasurementColumnItem[];
+  unit_panels: TimeSeriesUnitPanelGroup[];
   rows: TimeSeriesDataRowItem[];
   findings: TimeSeriesFindingItem[];
 }

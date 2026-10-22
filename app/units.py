@@ -121,7 +121,17 @@ def resolve_unit_string(raw: str | None) -> dict:
     assert raw is not None
     try:
         unit = _registry.parse_units(raw.strip())
-    except pint.errors.PintError:
+    except Exception:
+        # Deliberately broad: pint's own eval-based tokenizer can raise far more than its own
+        # ``PintError`` hierarchy on genuinely malformed free text a scientist actually typed
+        # (confirmed directly -- e.g. ``TypeError``, ``AssertionError``, ``ZeroDivisionError``
+        # for different kinds of unparseable input) -- every one of them means exactly the
+        # same thing here: this string is not a real unit, which is already ``MALFORMED``'s
+        # own documented meaning. Narrowing this to ``pint.errors.PintError`` alone would let
+        # an arbitrary free-text unit string crash every caller instead of disclosing a
+        # finding (confirmed by the Read-Only Dataset Inspection and Time-Series Plotting
+        # increment's own default-panel grouping, the first caller to compare *every*
+        # measurement column's own freely-typed unit string, not just a pre-validated one).
         return {
             "source_unit_string": raw,
             "normalized_unit": None,

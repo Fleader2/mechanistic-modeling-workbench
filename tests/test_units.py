@@ -38,6 +38,16 @@ def test_resolve_malformed_unit():
     assert result["source_unit_string"] == "not_a_real_unit_xyz"
 
 
+def test_resolve_classifies_unparseable_free_text_as_malformed_rather_than_raising():
+    # Confirmed directly: pint's own eval-based tokenizer raises plain ``TypeError``/
+    # ``AssertionError``/``ZeroDivisionError`` (never its own ``PintError`` subclass) for some
+    # genuinely malformed free text a scientist might actually type -- every one of these
+    # means exactly the same thing a ``PintError`` would: this string is not a real unit.
+    for raw in ("not-a-real-unit!!", "()", "1/0"):
+        result = resolve_unit_string(raw)
+        assert result["parse_status"] == UnitParseStatus.MALFORMED.value, raw
+
+
 def test_resolve_custom_agent2_rate_constant_units():
     for raw, expected_dimensionality in (
         ("per_sec", "1 / [time]"),

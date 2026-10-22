@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from app.models.enums import MeasurementValueStatus
 from app.models.time_series_dataset import TimeSeriesDataset
+from app.time_series.panels import group_columns_into_panels
 from app.time_series.parser import Finding, ParsedWorkbook
 
 #: The ``Metadata`` tab's own scalar field keys, in template order -- mirrors
@@ -92,6 +93,34 @@ class TimeSeriesDataRowItem(BaseModel):
     measurements: dict[str, TimeSeriesMeasurementValueItem]
 
 
+class TimeSeriesUnitPanelGroup(BaseModel):
+    """One default display-panel grouping of measurement columns that share a declared unit
+    (or jointly leave it undeclared) closely enough that plotting them on one shared axis
+    never requires an implicit rescale (``app.time_series.panels.group_columns_into_panels``,
+    task instructions: "keep incompatible or unknown-unit measurements on separate panels by
+    default")."""
+
+    column_names: list[str]
+    #: The literal, as-declared unit string shared by this group's own columns -- a verbatim
+    #: echo of one member column's own declared string, for display only, never a resolved or
+    #: normalized unit. ``None`` when every column in this group left its own unit undeclared.
+    shared_unit: str | None
+
+
+def _build_unit_panels(
+    measurement_columns: list[TimeSeriesMeasurementColumnItem],
+) -> list[TimeSeriesUnitPanelGroup]:
+    units_by_name = {c.column_name: c.unit for c in measurement_columns}
+    groups = group_columns_into_panels([(c.column_name, c.unit) for c in measurement_columns])
+    return [
+        TimeSeriesUnitPanelGroup(
+            column_names=group,
+            shared_unit=next((units_by_name[name] for name in group if units_by_name[name]), None),
+        )
+        for group in groups
+    ]
+
+
 class TimeSeriesWorkbookPreview(BaseModel):
     """What a preview call returns, and what a saved dataset's own content looks like --
     never carrying a database id (a preview was never saved; a saved dataset's own id sits
@@ -102,6 +131,9 @@ class TimeSeriesWorkbookPreview(BaseModel):
     metadata: dict[str, str | None]
     condition_legend: list[TimeSeriesConditionLegendItem]
     measurement_columns: list[TimeSeriesMeasurementColumnItem]
+    #: Computed fresh on every response, never persisted -- a pure, deterministic function of
+    #: this same response's own ``measurement_columns`` (see ``_build_unit_panels``).
+    unit_panels: list[TimeSeriesUnitPanelGroup]
     rows: list[TimeSeriesDataRowItem]
     findings: list[TimeSeriesFindingItem]
 
@@ -109,6 +141,16 @@ class TimeSeriesWorkbookPreview(BaseModel):
     def from_parsed(
         cls, parsed: ParsedWorkbook, *, original_filename: str, effective_dataset_name: str
     ) -> TimeSeriesWorkbookPreview:
+        measurement_columns = [
+            TimeSeriesMeasurementColumnItem(
+                column_name=c.column_name,
+                display_order=c.display_order,
+                unit=c.unit,
+                description=c.description,
+                declared_in_metadata=c.declared_in_metadata,
+            )
+            for c in parsed.measurement_columns
+        ]
         return cls(
             original_filename=original_filename,
             effective_dataset_name=effective_dataset_name,
@@ -117,16 +159,8 @@ class TimeSeriesWorkbookPreview(BaseModel):
                 TimeSeriesConditionLegendItem(condition_id=cid, description=desc)
                 for cid, desc in parsed.condition_legend
             ],
-            measurement_columns=[
-                TimeSeriesMeasurementColumnItem(
-                    column_name=c.column_name,
-                    display_order=c.display_order,
-                    unit=c.unit,
-                    description=c.description,
-                    declared_in_metadata=c.declared_in_metadata,
-                )
-                for c in parsed.measurement_columns
-            ],
+            measurement_columns=measurement_columns,
+            unit_panels=_build_unit_panels(measurement_columns),
             rows=[
                 TimeSeriesDataRowItem(
                     row_index=r.row_index,
@@ -220,6 +254,7 @@ class TimeSeriesDatasetDetail(BaseModel):
             metadata=metadata,
             condition_legend=condition_legend,
             measurement_columns=measurement_columns,
+            unit_panels=_build_unit_panels(measurement_columns),
             rows=rows,
             findings=TimeSeriesFindingItem.from_json_list(dataset.validation_findings),
         )
@@ -269,5 +304,6 @@ __all__ = [
     "TimeSeriesFindingItem",
     "TimeSeriesMeasurementColumnItem",
     "TimeSeriesMeasurementValueItem",
+    "TimeSeriesUnitPanelGroup",
     "TimeSeriesWorkbookPreview",
 ]
