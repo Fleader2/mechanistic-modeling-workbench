@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.models.enums import UncertaintyStatisticKind
+
 #: Bumped only if this workbook layout itself changes shape in a later increment. Written into
 #: every generated template's own "Template version" row, and read back (non-blocking finding
 #: if missing/unrecognized -- this version is not itself a reason to refuse an import, since
@@ -48,6 +50,27 @@ STRUCTURAL_DATA_COLUMNS = (
 NOT_APPLICABLE_TOKENS = frozenset({"na", "n/a", "not applicable"})
 #: Cell text (case-insensitive, trimmed) recognized as "explicitly recorded as unknown."
 UNKNOWN_TOKENS = frozenset({"unknown", "unk"})
+
+#: Cell text (case-insensitive, trimmed) recognized as declaring which statistic a "Measurement
+#: uncertainty definitions" row actually carries (calibration configuration close-out
+#: increment) -- never inferred, never defaulted: a cell whose text is not a key of this
+#: mapping is an unrecognized declaration (``app.time_series.parser``'s own disclosed, non-
+#: blocking finding), and that uncertainty column is then unusable (task instructions:
+#: "distinguish standard deviation from variance or standard error rather than treating them
+#: interchangeably").
+UNCERTAINTY_STATISTIC_KIND_TOKENS: dict[str, UncertaintyStatisticKind] = {
+    "sd": UncertaintyStatisticKind.STANDARD_DEVIATION,
+    "std": UncertaintyStatisticKind.STANDARD_DEVIATION,
+    "stdev": UncertaintyStatisticKind.STANDARD_DEVIATION,
+    "std dev": UncertaintyStatisticKind.STANDARD_DEVIATION,
+    "standard deviation": UncertaintyStatisticKind.STANDARD_DEVIATION,
+    "variance": UncertaintyStatisticKind.VARIANCE,
+    "var": UncertaintyStatisticKind.VARIANCE,
+    "se": UncertaintyStatisticKind.STANDARD_ERROR,
+    "sem": UncertaintyStatisticKind.STANDARD_ERROR,
+    "standard error": UncertaintyStatisticKind.STANDARD_ERROR,
+    "standard error of the mean": UncertaintyStatisticKind.STANDARD_ERROR,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +142,22 @@ METADATA_FIELDS: tuple[MetadataField, ...] = (
 #: an extra blank row never breaks parsing).
 MEASUREMENT_COLUMNS_SECTION_MARKER = "## Measurement column definitions"
 CONDITION_LEGEND_SECTION_MARKER = "## Condition / treatment legend"
+#: Joint Calibration Workflow prerequisite increment (docs/29 §4, docs/31): a Data-tab column
+#: declared here is an **independent variable** (e.g. a dose column) rather than a measurement
+#: -- excluded from "undeclared measurement column" disclosure, and never treated as an
+#: observed output. Absent entirely, every non-structural column keeps meaning exactly what it
+#: always has (a measurement column, byte-for-byte identical to every import before this
+#: sub-table existed) -- this is purely additive and only ever activates for a column actually
+#: named here.
+INDEPENDENT_VARIABLE_COLUMNS_SECTION_MARKER = "## Independent variable definitions"
+#: Calibration configuration close-out increment (docs/29 §5, docs/32): a Data-tab column
+#: declared here carries **observation-level, measured/reported uncertainty** (e.g. a standard
+#: deviation or standard error already computed by the scientist) for one specific measurement
+#: column -- excluded from measurement-column processing exactly like an independent-variable
+#: column, but never itself an independent variable or an observed output in its own right.
+#: Absent entirely, every non-structural column keeps meaning exactly what it always has -- this
+#: is purely additive and only ever activates for a column actually named here.
+MEASUREMENT_UNCERTAINTY_COLUMNS_SECTION_MARKER = "## Measurement uncertainty definitions"
 
 MEASUREMENT_COLUMNS_HEADER = (
     "Column name (must match a Data tab column exactly)",
@@ -126,6 +165,18 @@ MEASUREMENT_COLUMNS_HEADER = (
     "Description",
 )
 CONDITION_LEGEND_HEADER = ("Condition ID", "Description")
+INDEPENDENT_VARIABLE_COLUMNS_HEADER = (
+    "Column name (must match a Data tab column exactly)",
+    "Unit",
+    "Description",
+)
+MEASUREMENT_UNCERTAINTY_COLUMNS_HEADER = (
+    "Uncertainty column name (must match a Data tab column exactly)",
+    "Measurement column it describes (must match a measurement column name exactly)",
+    "Statistic (standard deviation / variance / standard error -- required)",
+    "Unit",
+    "Description",
+)
 
 __all__ = [
     "BIOLOGICAL_REPLICATE_COLUMN",
@@ -133,8 +184,12 @@ __all__ = [
     "CONDITION_LEGEND_HEADER",
     "CONDITION_LEGEND_SECTION_MARKER",
     "DATA_SHEET_NAME",
+    "INDEPENDENT_VARIABLE_COLUMNS_HEADER",
+    "INDEPENDENT_VARIABLE_COLUMNS_SECTION_MARKER",
     "MEASUREMENT_COLUMNS_HEADER",
     "MEASUREMENT_COLUMNS_SECTION_MARKER",
+    "MEASUREMENT_UNCERTAINTY_COLUMNS_HEADER",
+    "MEASUREMENT_UNCERTAINTY_COLUMNS_SECTION_MARKER",
     "METADATA_FIELDS",
     "METADATA_SHEET_NAME",
     "NOT_APPLICABLE_TOKENS",
@@ -143,6 +198,7 @@ __all__ = [
     "TECHNICAL_REPLICATE_COLUMN",
     "TEMPLATE_VERSION",
     "TIME_COLUMN",
+    "UNCERTAINTY_STATISTIC_KIND_TOKENS",
     "UNKNOWN_TOKENS",
     "MetadataField",
 ]

@@ -436,6 +436,40 @@ class ModelSpeciesKind(StrEnum):
     BOUNDARY = "BOUNDARY"
 
 
+class ModelParameterCatalogStatus(StrEnum):
+    """Whether a durable, whole-model parameter catalog is actually available for a ``Model``
+    row, for `app.models.model_parameter_catalog.ModelParameterCatalog.status` (Joint
+    Calibration Workflow prerequisite increment, ``docs/31``). A deliberately separate
+    vocabulary from ``ModelSpeciesCatalogStatus`` (identical two values, but a distinct type)
+    -- these are two independently-evolving catalogs, captured from the same harness round
+    trip but never coupled to one shared enum type.
+
+    No row at all means "never attempted" -- treated identically to ``UNAVAILABLE`` by every
+    reader, the same discipline ``ModelSpeciesCatalogStatus`` already establishes.
+    """
+
+    AVAILABLE = "AVAILABLE"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class ModelParameterKind(StrEnum):
+    """A real, compiled parameter's own classification -- for
+    `app.models.model_parameter_catalog.ModelParameter.kind`.
+
+    ``INDEPENDENT`` -- a genuinely settable constant (never defined by an SBML assignment
+    rule) -- the only kind that may ever be an independent calibration target.
+    ``DERIVED`` -- defined entirely by an assignment rule (e.g. Antimony's own
+    ``Vmax := k1 * 2``) -- a computed quantity, never independently settable/fittable, and
+    never silently treated as if it were (docs/29 §1 row 15's own "distinguish selectable
+    independent parameters from derived quantities" requirement). Determined from the real,
+    compiled model alone (``app.harness.runners.run_agent3_inspect_antimony_model`` on the
+    harness side) -- never inferred from a name or from Agent2's own structural claims alone.
+    """
+
+    INDEPENDENT = "INDEPENDENT"
+    DERIVED = "DERIVED"
+
+
 class AliasMappingAssignmentStatus(StrEnum):
     """One measurement column's own status within a single dataset<->model-version alias-
     mapping revision (`app.models.dataset_model_alias_mapping.DatasetModelAliasMappingAssignment
@@ -514,9 +548,279 @@ class ModuleSetDraftStatus(StrEnum):
     SAVED = "SAVED"
 
 
+class ModelRelationshipKind(StrEnum):
+    """How two ``Model`` rows are explicitly declared related (Joint Calibration Workflow
+    design, ``docs/29``) -- never inferred from matching names, always an explicit, declared
+    fact (`app.models.model_relationship.ModelRelationship`)."""
+
+    VARIANT_OF = "VARIANT_OF"
+    SHARES_STRUCTURE_WITH = "SHARES_STRUCTURE_WITH"
+
+
+class CalibrationJobStatus(StrEnum):
+    """One ``CalibrationJob``'s own lifecycle state (``docs/29``/``docs/30``).
+
+    ``DRAFT`` -- mutable working state, freely editable. ``REVIEWED`` -- "Complete review" has
+    run with zero blocking (``ERROR``-severity) findings; any further edit drops the job back to
+    ``DRAFT`` (docs/29 §7's own "Preserving prior work" table) -- a job is never left claiming a
+    completed review that no longer reflects its current configuration. Neither status ever
+    implies the job is *executable* -- that is a wholly separate, always-computed-fresh check
+    (docs/29 §5 rule 5), since whole-model execution does not exist yet (docs/29 §6).
+    """
+
+    DRAFT = "DRAFT"
+    REVIEWED = "REVIEWED"
+
+
+class CalibrationExperimentRole(StrEnum):
+    """Whether one ``CalibrationExperiment``'s own observations feed the fit or are held out
+    from it (``docs/29`` §5 step 4)."""
+
+    CALIBRATION = "CALIBRATION"
+    HELD_OUT_VALIDATION = "HELD_OUT_VALIDATION"
+
+
+class CalibrationObjectiveWeighting(StrEnum):
+    """One experiment's own declared objective-weighting policy (``docs/29`` §5 step 3,
+    ``docs/32``'s own minimal error/weighting contract), collected explicitly on Screen 2
+    rather than left implicit.
+
+    ``UNWEIGHTED`` -- a real, named policy choice (ordinary least squares: every residual
+    counted equally), never a silent default masquerading as "not yet decided," and never
+    itself evidence that every output's uncertainty is actually known (``docs/32`` -- a
+    ``CalibrationExperimentOutputWeighting`` with a non-``UNKNOWN`` uncertainty source, present
+    while this policy is ``UNWEIGHTED``, is disclosed, never silently ignored --
+    ``UNWEIGHTED_POLICY_IGNORES_DECLARED_UNCERTAINTY``).
+    ``INVERSE_VARIANCE`` -- each residual is scaled by ``1 / sigma**2``, using every covered
+    output's own ``CalibrationExperimentOutputWeighting.uncertainty_source``. Requires every
+    output of this experiment's own pinned dataset to have a non-``UNKNOWN`` uncertainty source
+    declared -- enforced as a blocking review finding
+    (``INVERSE_VARIANCE_WEIGHTING_REQUIRES_KNOWN_UNCERTAINTY``), never silently treated as
+    ``UNWEIGHTED`` for whichever outputs happen to lack one.
+
+    Supersedes the first revision's own ``DECLARED_SIGMA`` (free-text-only, no durable
+    per-observation sigma to point to) -- an already-uncommitted Postgres enum label kept
+    physically in the database type for additive-migration safety (``docs/32`` §2's own
+    migration-compatibility note) but never again produced or consumed by this codebase.
+    """
+
+    UNWEIGHTED = "UNWEIGHTED"
+    INVERSE_VARIANCE = "INVERSE_VARIANCE"
+
+
+class CalibrationBindingModelMeaning(StrEnum):
+    """One independent-variable binding's own explicit model meaning (Joint Calibration
+    Workflow prerequisite increment, ``docs/31``; supersedes the first revision's narrower
+    ``CalibrationScenarioOverrideTargetKind`` ``PARAMETER``/``INITIAL_CONDITION`` pair).
+
+    ``INITIAL_VALUE`` -- sets a species' own starting concentration for this experiment.
+    ``PARAMETER_OVERRIDE`` -- sets an independent model parameter's own value for this
+    experiment, distinct from the job-wide ``CalibrationParameterRole`` (which governs how a
+    parameter is *fitted*; a binding instead fixes it to a known, declared value for one
+    specific experiment -- e.g. a dose-dependent rate constant already known from the
+    literature). ``INTERVENTION`` -- a species- or parameter-targeted perturbation applied
+    during the experiment (not merely its starting state), e.g. a step dose at a declared time.
+    Never a derived/assignment-rule quantity for any of the three -- see
+    ``app.models.model_parameter_catalog.ModelParameterKind.DERIVED``.
+    """
+
+    INITIAL_VALUE = "INITIAL_VALUE"
+    PARAMETER_OVERRIDE = "PARAMETER_OVERRIDE"
+    INTERVENTION = "INTERVENTION"
+
+
+class CalibrationBindingValueSource(StrEnum):
+    """Where one ``CalibrationExperimentVariableBinding``'s own value actually comes from
+    (``docs/31``).
+
+    ``CONSTANT`` -- a single, curator-typed value for the whole experiment.
+    ``DATASET_COLUMN`` -- the experiment's own pinned dataset's own declared independent-
+    variable column (``TimeSeriesIndependentVariableColumn``) -- a genuinely per-row value
+    (e.g. a dose that varies by sample), read from the dataset's own original data at
+    execution time, never copied/duplicated into this row (task instructions: "preserve
+    original data and units; do not silently convert values").
+    """
+
+    CONSTANT = "CONSTANT"
+    DATASET_COLUMN = "DATASET_COLUMN"
+
+
+class CalibrationUncertaintySource(StrEnum):
+    """Where one output's own observation uncertainty actually comes from, for
+    `app.models.calibration.CalibrationExperimentOutputWeighting.uncertainty_source` (``docs/29``
+    §5's minimal error/weighting contract, ``docs/32``). Collected explicitly and distinctly --
+    never collapsed into a single "has uncertainty: yes/no" flag, so a reviewer can always tell
+    *why* a residual is or is not scaled.
+
+    ``MEASURED`` -- a real, already-computed, per-row value read from this output's own
+    declared ``TimeSeriesMeasurementUncertaintyColumn`` at execution time (never copied in here
+    -- the identical "preserve original data, read at execution time" discipline
+    ``CalibrationBindingValueSource.DATASET_COLUMN`` already establishes). Only a legal choice
+    when the experiment's own pinned dataset actually declares one for this output --
+    confirmed at the moment this row is set, never assumed.
+    ``USER_ASSUMED`` -- a single, curator-typed constant (``assumed_sigma_value``/
+    ``assumed_sigma_unit``) applies to every observation of this output in this experiment --
+    an explicit, disclosed assumption, never fabricated from replicate spread or any other
+    silent inference (task instructions: "do not invent sigma, or silently infer it from
+    replicates").
+    ``UNKNOWN`` -- no uncertainty information exists for this output yet, stated explicitly
+    rather than left blank. An ``UNWEIGHTED`` objective is a legitimate choice regardless of
+    this value, but ``UNKNOWN`` is never silently treated as equivalent to a *known*, trivial
+    (unit) uncertainty, and an ``INVERSE_VARIANCE`` objective can never actually run while any
+    covered output remains ``UNKNOWN`` (task instructions: "do not ... equate an unweighted fit
+    with known measurement uncertainty").
+    """
+
+    MEASURED = "MEASURED"
+    USER_ASSUMED = "USER_ASSUMED"
+    UNKNOWN = "UNKNOWN"
+
+
+class UncertaintyStatisticKind(StrEnum):
+    """Which specific statistical quantity a declared uncertainty value actually *is* --
+    required wherever a real uncertainty value is captured (a workbook's own "Measurement
+    uncertainty definitions" column, `app.models.time_series_dataset
+    .TimeSeriesMeasurementUncertaintyColumn.statistic_kind`; a curator-typed constant,
+    `app.models.calibration.CalibrationExperimentOutputWeighting
+    .assumed_sigma_statistic_kind`), never left implicit. A deliberately time-series/dataset-
+    scoped vocabulary, not calibration-specific -- both layers import this same type so a
+    workbook-declared kind and a curator-typed kind are always directly comparable.
+
+    A standard deviation, a variance, and a standard error are three materially different
+    numbers for the identical underlying spread (``variance = standard_deviation**2``;
+    ``standard_error = standard_deviation / sqrt(n)`` for a sample of size ``n``) -- silently
+    treating any one of them as another would misweight every residual it backs (task
+    instructions: "distinguish standard deviation from variance or standard error rather than
+    treating them interchangeably"). This increment captures and discloses which one a value
+    is; it never converts between them -- a ``STANDARD_ERROR`` value is never silently rescaled
+    into the standard deviation an inverse-variance weight actually needs, since that
+    conversion requires a sample size this contract does not capture, and fabricating one would
+    violate the same "never invent" discipline this whole contract is built on.
+
+    ``STANDARD_DEVIATION`` -- the value an inverse-variance weight (``1/sigma**2``) is defined
+    in terms of. ``VARIANCE`` -- already-squared; using it as if it were a standard deviation
+    would square it a second time. ``STANDARD_ERROR`` -- the standard deviation of a *sample
+    mean*, not of an individual observation; conflating the two understates the true
+    observation-level spread whenever ``n > 1``.
+    """
+
+    STANDARD_DEVIATION = "STANDARD_DEVIATION"
+    VARIANCE = "VARIANCE"
+    STANDARD_ERROR = "STANDARD_ERROR"
+
+
+class CalibrationParameterRoleKind(StrEnum):
+    """One parameter's relationship across a ``CalibrationJob`` (``docs/29`` §5's parameter-
+    relationship taxonomy). ``MODEL_SPECIFIC``/``FIXED`` apply within a single arm (and are
+    collected even for a one-arm job, ``docs/29`` §7 Screen 2); ``EXACT_EQUALITY``/
+    ``EXACT_AFFINE_LINK``/``SOFT_PRIOR_LINK`` declare a relationship *across* arms and are shown
+    only once a job has two or more. See ``docs/29`` §5 for the full, precise definition of each
+    -- in particular, why a hard link (``EXACT_EQUALITY``/``EXACT_AFFINE_LINK``) is a materially
+    different, stronger claim than a ``SOFT_PRIOR_LINK``, never presented as equivalent.
+    """
+
+    MODEL_SPECIFIC = "MODEL_SPECIFIC"
+    FIXED = "FIXED"
+    EXACT_EQUALITY = "EXACT_EQUALITY"
+    EXACT_AFFINE_LINK = "EXACT_AFFINE_LINK"
+    SOFT_PRIOR_LINK = "SOFT_PRIOR_LINK"
+
+
+class CalibrationFindingSeverity(StrEnum):
+    """How serious one computed-on-demand calibration-job finding is (``docs/29`` §13 -- these
+    are never persisted rows, only a review response's own content). A deliberate, separate
+    three-value vocabulary from ``DiagnosticSeverity`` (which also has ``UNRESOLVED``, a concept
+    this increment's own findings do not need): ``INFO`` is disclosed, not actionable;
+    ``WARNING`` never blocks "Complete review"; ``ERROR`` always does.
+    """
+
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+
+
+class CalibrationFindingCategory(StrEnum):
+    """What kind of problem or disclosure one computed calibration-job finding reports
+    (``docs/29`` §5/§13). See ``app.persistence.calibration.compute_findings`` for exactly when
+    each fires.
+
+    ``CALIBRATION_VALIDATION_DATASET_REUSE`` -- the identical dataset is assigned as both
+    ``CALIBRATION`` and ``HELD_OUT_VALIDATION`` evidence. ``INCOMPATIBLE_EXPERIMENTS_MERGED`` --
+    two experiments on the same arm disagree on a factor the trajectory-sharing compatibility
+    check (``docs/29`` §5) requires to match. ``DATASET_REUSED_ACROSS_DIFFERENT_MODELS`` -- the
+    identical dataset is assigned to arms with different models. ``PARAMETER_ROLE_CYCLE`` -- a
+    cycle exists in the ``EXACT_EQUALITY``/``EXACT_AFFINE_LINK`` reference graph.
+    ``UNRESOLVED_LINK_REFERENCE`` -- a link role's own ``reference_arm_id`` no longer names an
+    arm in this job. ``AMBIGUOUS_SAME_NAME_PARAMETER`` -- the identical ``parameter_name`` is
+    independently declared ``MODEL_SPECIFIC``/``FIXED`` in two or more arms with no cross-arm
+    role tying them together -- never assumed to be the same parameter merely because the name
+    matches (``docs/29``'s own "matching names never establish identity" principle).
+    ``UNIT_INCOMPATIBLE_LINK`` -- an ``EXACT_AFFINE_LINK``'s own declared units are dimensionally
+    incompatible. ``ARM_WITHOUT_MAPPED_EXPERIMENT``/``NO_FREE_PARAMETER_TO_FIT`` are the two
+    configuration-completeness rules of ``docs/29`` §5 (rules 1 and 3), reported through this
+    same mechanism rather than a separate one. ``UNRESOLVED_LINK_REFERENCE`` is declared for
+    documentation completeness but never actually computed here: ``CalibrationParameterRole
+    .reference_arm_id`` is an ``ON DELETE RESTRICT`` foreign key, so an arm a link references can
+    never be removed while the link exists -- the condition this category would describe is
+    prevented at removal time, not detected at review time (see
+    ``app.persistence.calibration.remove_arm``).
+
+    Added by the calibration configuration close-out increment (``docs/32``), see
+    ``app.persistence.calibration._uncertainty_weighting_findings``:
+    ``INVERSE_VARIANCE_WEIGHTING_REQUIRES_KNOWN_UNCERTAINTY`` -- an experiment declares
+    ``INVERSE_VARIANCE`` objective weighting, but at least one of its own outputs has no known
+    (``MEASURED``/``USER_ASSUMED``) uncertainty source -- blocking, since inverse-variance
+    weighting literally cannot be computed without it.
+    ``OUTPUT_WEIGHT_AND_UNCERTAINTY_SCALING_BOTH_APPLY`` -- an output combines a non-default
+    ``relative_output_weight`` with ``INVERSE_VARIANCE`` uncertainty scaling from its own known
+    uncertainty source -- both legitimately apply and multiply together, disclosed so this is
+    never an accidental double-weighting (task instructions).
+    ``UNWEIGHTED_POLICY_IGNORES_DECLARED_UNCERTAINTY`` -- an output has a declared, known
+    uncertainty source, but the experiment's own objective weighting is ``UNWEIGHTED``, so it
+    is never actually used -- disclosed so an unweighted fit is never mistaken for one that
+    already accounts for known measurement uncertainty (task instructions).
+    ``MEASURED_UNCERTAINTY_NOT_STRICTLY_POSITIVE`` -- an ``INVERSE_VARIANCE`` experiment's own
+    ``MEASURED`` output has at least one observation (a row where the *measurement* itself is
+    present) whose own declared uncertainty is zero, negative, or itself not present --
+    blocking, since inverse-variance weighting is undefined (division by zero) or meaningless
+    (a negative spread) for that observation, and a measurement with no residual-defining
+    uncertainty can never silently be treated as if it had one (task instructions: "zero must
+    not produce infinite weight").
+    """
+
+    CALIBRATION_VALIDATION_DATASET_REUSE = "CALIBRATION_VALIDATION_DATASET_REUSE"
+    INCOMPATIBLE_EXPERIMENTS_MERGED = "INCOMPATIBLE_EXPERIMENTS_MERGED"
+    DATASET_REUSED_ACROSS_DIFFERENT_MODELS = "DATASET_REUSED_ACROSS_DIFFERENT_MODELS"
+    PARAMETER_ROLE_CYCLE = "PARAMETER_ROLE_CYCLE"
+    UNRESOLVED_LINK_REFERENCE = "UNRESOLVED_LINK_REFERENCE"
+    AMBIGUOUS_SAME_NAME_PARAMETER = "AMBIGUOUS_SAME_NAME_PARAMETER"
+    UNIT_INCOMPATIBLE_LINK = "UNIT_INCOMPATIBLE_LINK"
+    ARM_WITHOUT_MAPPED_EXPERIMENT = "ARM_WITHOUT_MAPPED_EXPERIMENT"
+    NO_FREE_PARAMETER_TO_FIT = "NO_FREE_PARAMETER_TO_FIT"
+    INVERSE_VARIANCE_WEIGHTING_REQUIRES_KNOWN_UNCERTAINTY = (
+        "INVERSE_VARIANCE_WEIGHTING_REQUIRES_KNOWN_UNCERTAINTY"
+    )
+    OUTPUT_WEIGHT_AND_UNCERTAINTY_SCALING_BOTH_APPLY = (
+        "OUTPUT_WEIGHT_AND_UNCERTAINTY_SCALING_BOTH_APPLY"
+    )
+    UNWEIGHTED_POLICY_IGNORES_DECLARED_UNCERTAINTY = (
+        "UNWEIGHTED_POLICY_IGNORES_DECLARED_UNCERTAINTY"
+    )
+    MEASURED_UNCERTAINTY_NOT_STRICTLY_POSITIVE = "MEASURED_UNCERTAINTY_NOT_STRICTLY_POSITIVE"
+
+
 __all__ = [
     "AliasMappingAssignmentStatus",
     "AliasMappingUnitFinding",
+    "CalibrationBindingModelMeaning",
+    "CalibrationBindingValueSource",
+    "CalibrationExperimentRole",
+    "CalibrationFindingCategory",
+    "CalibrationFindingSeverity",
+    "CalibrationJobStatus",
+    "CalibrationObjectiveWeighting",
+    "CalibrationParameterRoleKind",
+    "CalibrationUncertaintySource",
     "ConfidenceClass",
     "CrossModuleDiagnosticCategory",
     "DiagnosticReviewStatus",
@@ -529,6 +833,9 @@ __all__ = [
     "ModelBuildRequestReactionRole",
     "ModelBuildRequestSpeciesRole",
     "ModelModuleExecutionStatus",
+    "ModelParameterCatalogStatus",
+    "ModelParameterKind",
+    "ModelRelationshipKind",
     "ModelSourceType",
     "ModelSpeciesCatalogStatus",
     "ModelSpeciesKind",
@@ -546,6 +853,7 @@ __all__ = [
     "RunStage",
     "RunStatus",
     "SubprojectTaskType",
+    "UncertaintyStatisticKind",
     "UnitParseStatus",
     "WorkflowLifecycleStatus",
 ]

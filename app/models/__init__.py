@@ -14,6 +14,16 @@ a copied identifier, never a constraint-enforced relationship.
 """
 
 from app.db.base import Base
+from app.models.calibration import (
+    CalibrationArm,
+    CalibrationExperiment,
+    CalibrationExperimentOutputWeighting,
+    CalibrationExperimentVariableBinding,
+    CalibrationJob,
+    CalibrationJobRevision,
+    CalibrationParameterRole,
+    CalibrationParameterRoleArm,
+)
 from app.models.cross_module_diagnostic import CrossModuleDiagnostic, CrossModuleDiagnosticRun
 from app.models.dataset_model_alias_mapping import (
     DatasetModelAliasMappingAssignment,
@@ -38,6 +48,8 @@ from app.models.model_build_request import (
     ModelBuildRequestSpecies,
 )
 from app.models.model_module import ModelModule
+from app.models.model_parameter_catalog import ModelParameter, ModelParameterCatalog
+from app.models.model_relationship import ModelRelationship
 from app.models.model_species_catalog import ModelCompartment, ModelSpecies, ModelSpeciesCatalog
 from app.models.modeling_decision import ModelingDecision, ModelingDecisionOption
 from app.models.module_aggregate import ModuleAggregate
@@ -57,12 +69,22 @@ from app.models.subproject import Subproject
 from app.models.time_series_dataset import (
     TimeSeriesDataset,
     TimeSeriesDatasetRow,
+    TimeSeriesIndependentVariableColumn,
     TimeSeriesMeasurementColumn,
+    TimeSeriesMeasurementUncertaintyColumn,
 )
 from app.models.unit_resolution import UnitResolution
 
 __all__ = [
     "Base",
+    "CalibrationArm",
+    "CalibrationExperiment",
+    "CalibrationExperimentOutputWeighting",
+    "CalibrationExperimentVariableBinding",
+    "CalibrationJob",
+    "CalibrationJobRevision",
+    "CalibrationParameterRole",
+    "CalibrationParameterRoleArm",
     "CrossModuleDiagnostic",
     "CrossModuleDiagnosticRun",
     "DatasetModelAliasMappingAssignment",
@@ -85,6 +107,9 @@ __all__ = [
     "ModelBuildRequestSpecies",
     "ModelCompartment",
     "ModelModule",
+    "ModelParameter",
+    "ModelParameterCatalog",
+    "ModelRelationship",
     "ModelSpecies",
     "ModelSpeciesCatalog",
     "ModelingDecision",
@@ -104,6 +129,8 @@ __all__ = [
     "Subproject",
     "TimeSeriesDataset",
     "TimeSeriesDatasetRow",
+    "TimeSeriesIndependentVariableColumn",
     "TimeSeriesMeasurementColumn",
+    "TimeSeriesMeasurementUncertaintyColumn",
     "UnitResolution",
 ]

@@ -105,6 +105,75 @@ def declare_measurement_columns(
     return buffer.getvalue()
 
 
+def declare_independent_variables(
+    workbook_bytes: bytes, declarations: dict[str, tuple[str | None, str | None]]
+) -> bytes:
+    """Starting from a workbook's own bytes, write one row into the Metadata tab's own
+    "## Independent variable definitions" sub-table per ``declarations`` entry (``column_name
+    -> (unit, description)``) -- the Joint Calibration Workflow prerequisite increment's own
+    sibling to ``declare_measurement_columns``, identical mechanism, a different marker/
+    sub-table (``app.time_series.contract.INDEPENDENT_VARIABLE_COLUMNS_SECTION_MARKER``)."""
+    workbook = load_workbook(BytesIO(workbook_bytes))
+    metadata_sheet = workbook["Metadata"]
+    section_row = next(
+        r
+        for r in range(1, metadata_sheet.max_row + 1)
+        if isinstance(metadata_sheet.cell(row=r, column=1).value, str)
+        and metadata_sheet.cell(row=r, column=1).value.startswith(
+            "## Independent variable definitions"
+        )
+    )
+    header_row = section_row + 1
+    for offset, (column_name, (unit, description)) in enumerate(declarations.items(), start=1):
+        metadata_sheet.cell(row=header_row + offset, column=1, value=column_name)
+        metadata_sheet.cell(row=header_row + offset, column=2, value=unit)
+        metadata_sheet.cell(row=header_row + offset, column=3, value=description)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def declare_measurement_uncertainty(
+    workbook_bytes: bytes,
+    declarations: dict[str, tuple[str, str | None, str | None, str | None]],
+) -> bytes:
+    """Starting from a workbook's own bytes, write one row into the Metadata tab's own
+    "## Measurement uncertainty definitions" sub-table per ``declarations`` entry
+    (``uncertainty_column_name -> (measurement_column_name, statistic_kind, unit,
+    description)`` -- ``statistic_kind`` is the literal cell text, e.g. ``"SD"``, matched
+    case-insensitively against ``app.time_series.contract
+    .UNCERTAINTY_STATISTIC_KIND_TOKENS``) -- calibration configuration close-out increment
+    (docs/29 §5, docs/32), identical mechanism to ``declare_independent_variables``, a
+    different (five-column) marker/sub-table (``app.time_series.contract
+    .MEASUREMENT_UNCERTAINTY_COLUMNS_SECTION_MARKER``)."""
+    workbook = load_workbook(BytesIO(workbook_bytes))
+    metadata_sheet = workbook["Metadata"]
+    section_row = next(
+        r
+        for r in range(1, metadata_sheet.max_row + 1)
+        if isinstance(metadata_sheet.cell(row=r, column=1).value, str)
+        and metadata_sheet.cell(row=r, column=1).value.startswith(
+            "## Measurement uncertainty definitions"
+        )
+    )
+    header_row = section_row + 1
+    for offset, (
+        column_name,
+        (measurement_column_name, statistic_kind, unit, description),
+    ) in enumerate(declarations.items(), start=1):
+        # Direct attribute assignment, not cell(..., value=...): the template's own first
+        # data row in this sub-table already carries its own example content (openpyxl's
+        # cell(..., value=None) is a no-op against an already-populated cell, not a clear --
+        # the same gotcha populate_data_tab's own header-clearing logic already works around).
+        for column_index, value in enumerate(
+            (column_name, measurement_column_name, statistic_kind, unit, description), start=1
+        ):
+            metadata_sheet.cell(row=header_row + offset, column=column_index).value = value
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
 #: A second, richer regression fixture for the Read-Only Dataset Inspection and Time-Series
 #: Plotting increment (``docs/28``) -- the original RAS/MAPK fixture above deliberately has no
 #: sample/condition/replicate columns at all and every measurement column's unit left
@@ -169,7 +238,9 @@ __all__ = [
     "RICH_FIXTURE_ROWS",
     "RICH_FIXTURE_UNIT_DECLARATIONS",
     "blank_template_bytes",
+    "declare_independent_variables",
     "declare_measurement_columns",
+    "declare_measurement_uncertainty",
     "fixture_workbook_bytes",
     "populate_data_tab",
     "rich_fixture_workbook_bytes",

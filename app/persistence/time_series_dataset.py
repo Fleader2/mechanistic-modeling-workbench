@@ -22,7 +22,9 @@ from app.models.dataset_reference import DatasetReference
 from app.models.time_series_dataset import (
     TimeSeriesDataset,
     TimeSeriesDatasetRow,
+    TimeSeriesIndependentVariableColumn,
     TimeSeriesMeasurementColumn,
+    TimeSeriesMeasurementUncertaintyColumn,
 )
 from app.persistence.dataset_reference import persist_dataset_reference
 from app.persistence.types import PersistenceAction, PersistenceResult
@@ -169,11 +171,47 @@ def persist_time_series_dataset(
                     )
                 )
 
+            for iv_column in parsed.independent_variable_columns:
+                session.add(
+                    TimeSeriesIndependentVariableColumn(
+                        time_series_dataset_id=row.id,
+                        column_name=iv_column.column_name,
+                        display_order=iv_column.display_order,
+                        unit=iv_column.unit,
+                        description=iv_column.description,
+                    )
+                )
+
+            for uncertainty_column in parsed.measurement_uncertainty_columns:
+                session.add(
+                    TimeSeriesMeasurementUncertaintyColumn(
+                        time_series_dataset_id=row.id,
+                        column_name=uncertainty_column.column_name,
+                        measurement_column_name=uncertainty_column.measurement_column_name,
+                        statistic_kind=uncertainty_column.statistic_kind,
+                        display_order=uncertainty_column.display_order,
+                        unit=uncertainty_column.unit,
+                        description=uncertainty_column.description,
+                    )
+                )
+
             for data_row in parsed.rows:
                 measurements_json = json.dumps(
                     {
                         name: {"status": mv.status.value, "value": mv.value, "raw": mv.raw}
                         for name, mv in data_row.measurements.items()
+                    }
+                )
+                independent_variables_json = json.dumps(
+                    {
+                        name: {"status": mv.status.value, "value": mv.value, "raw": mv.raw}
+                        for name, mv in data_row.independent_variables.items()
+                    }
+                )
+                measurement_uncertainty_json = json.dumps(
+                    {
+                        name: {"status": mv.status.value, "value": mv.value, "raw": mv.raw}
+                        for name, mv in data_row.measurement_uncertainty.items()
                     }
                 )
                 session.add(
@@ -188,6 +226,8 @@ def persist_time_series_dataset(
                         time_value=data_row.time_value,
                         time_raw=data_row.time_raw,
                         measurements=measurements_json,
+                        independent_variables=independent_variables_json,
+                        measurement_uncertainty=measurement_uncertainty_json,
                     )
                 )
             session.flush()
@@ -224,13 +264,15 @@ def persist_time_series_dataset(
 
 
 def get_time_series_dataset(session: Session, dataset_id: UUID) -> TimeSeriesDataset | None:
-    """One ``TimeSeriesDataset`` by id, with its measurement columns and rows eagerly loaded
-    (the reopen screen always needs both in full). Read-only."""
+    """One ``TimeSeriesDataset`` by id, with its measurement/independent-variable columns and
+    rows eagerly loaded (the reopen screen always needs all of them in full). Read-only."""
     return session.execute(
         select(TimeSeriesDataset)
         .where(TimeSeriesDataset.id == dataset_id)
         .options(
             selectinload(TimeSeriesDataset.measurement_columns),
+            selectinload(TimeSeriesDataset.independent_variable_columns),
+            selectinload(TimeSeriesDataset.measurement_uncertainty_columns),
             selectinload(TimeSeriesDataset.rows),
             selectinload(TimeSeriesDataset.dataset_reference),
         )
@@ -248,6 +290,8 @@ def list_time_series_datasets_for_subproject(
         .options(
             selectinload(TimeSeriesDataset.dataset_reference),
             selectinload(TimeSeriesDataset.measurement_columns),
+            selectinload(TimeSeriesDataset.independent_variable_columns),
+            selectinload(TimeSeriesDataset.measurement_uncertainty_columns),
             selectinload(TimeSeriesDataset.rows),
         )
         .order_by(TimeSeriesDataset.created_at.desc())

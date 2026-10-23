@@ -41,10 +41,13 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.dataset_reference import DatasetReference
-from app.models.enums import MeasurementValueStatus
+from app.models.enums import MeasurementValueStatus, UncertaintyStatisticKind
 
 _MEASUREMENT_VALUE_STATUS = Enum(
     MeasurementValueStatus, name="measurement_value_status", create_type=False
+)
+_UNCERTAINTY_STATISTIC_KIND = Enum(
+    UncertaintyStatisticKind, name="uncertainty_statistic_kind", create_type=False
 )
 
 
@@ -109,6 +112,27 @@ class TimeSeriesDataset(Base):
     measurement_columns: Mapped[list[TimeSeriesMeasurementColumn]] = relationship(
         back_populates="dataset", order_by="TimeSeriesMeasurementColumn.display_order"
     )
+    #: Joint Calibration Workflow prerequisite increment (docs/29 §4, docs/31): columns
+    #: explicitly declared as model *inputs* (e.g. dose) rather than measured outputs. Empty
+    #: for every dataset saved before this increment, and for any workbook that never declares
+    #: the new "Independent variable definitions" Metadata sub-table -- purely additive.
+    independent_variable_columns: Mapped[list[TimeSeriesIndependentVariableColumn]] = (
+        relationship(
+            back_populates="dataset",
+            order_by="TimeSeriesIndependentVariableColumn.display_order",
+        )
+    )
+    #: Calibration configuration close-out increment (docs/29 §5, docs/32): columns explicitly
+    #: declared as already-computed, observation-level uncertainty for one specific measurement
+    #: column. Empty for every dataset saved before this increment, and for any workbook that
+    #: never declares the "Measurement uncertainty definitions" Metadata sub-table -- purely
+    #: additive.
+    measurement_uncertainty_columns: Mapped[list[TimeSeriesMeasurementUncertaintyColumn]] = (
+        relationship(
+            back_populates="dataset",
+            order_by="TimeSeriesMeasurementUncertaintyColumn.display_order",
+        )
+    )
     rows: Mapped[list[TimeSeriesDatasetRow]] = relationship(
         back_populates="dataset", order_by="TimeSeriesDatasetRow.row_index"
     )
@@ -149,6 +173,91 @@ class TimeSeriesMeasurementColumn(Base):
     declared_in_metadata: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     dataset: Mapped[TimeSeriesDataset] = relationship(back_populates="measurement_columns")
+
+
+class TimeSeriesIndependentVariableColumn(Base):
+    """One Data-tab column explicitly declared, in the Metadata tab's own "Independent
+    variable definitions" sub-table, as a model *input* (e.g. a dose column) -- Joint
+    Calibration Workflow prerequisite increment (docs/29 §4, docs/31). Mirrors
+    ``TimeSeriesMeasurementColumn`` exactly, except there is no "undeclared" state here: a
+    column is only ever a row in this table *because* it was declared -- without that
+    declaration the identical column is simply a measurement column instead (see
+    ``app.time_series.parser`` module docstring)."""
+
+    __tablename__ = "time_series_independent_variable_column"
+    __table_args__ = (
+        UniqueConstraint(
+            "time_series_dataset_id",
+            "column_name",
+            name="uq_ts_independent_variable_column_dataset_id_column_name",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    time_series_dataset_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("time_series_dataset.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    column_name: Mapped[str] = mapped_column(Text, nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit: Mapped[str | None] = mapped_column(String)
+    description: Mapped[str | None] = mapped_column(Text)
+
+    dataset: Mapped[TimeSeriesDataset] = relationship(
+        back_populates="independent_variable_columns"
+    )
+
+
+class TimeSeriesMeasurementUncertaintyColumn(Base):
+    """One Data-tab column explicitly declared, in the Metadata tab's own "Measurement
+    uncertainty definitions" sub-table, as already-computed, observation-level uncertainty
+    (e.g. a standard deviation) for one specific measurement column -- calibration
+    configuration close-out increment (docs/29 §5, docs/32). Mirrors
+    ``TimeSeriesIndependentVariableColumn`` exactly, plus ``measurement_column_name``: the
+    ``TimeSeriesMeasurementColumn.column_name`` this uncertainty column describes, matched by
+    name rather than by a foreign key (measurement columns are never looked up by id outside
+    their own dataset) -- resolved and validated once, at import time
+    (``app.time_series.parser``), never re-resolved later."""
+
+    __tablename__ = "time_series_measurement_uncertainty_column"
+    __table_args__ = (
+        UniqueConstraint(
+            "time_series_dataset_id",
+            "column_name",
+            name="uq_ts_measurement_uncertainty_column_dataset_id_column_name",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    time_series_dataset_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("time_series_dataset.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    column_name: Mapped[str] = mapped_column(Text, nullable=False)
+    measurement_column_name: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Required -- never left implicit or inferred (``app.models.enums
+    #: .UncertaintyStatisticKind``; task instructions: "distinguish standard deviation from
+    #: variance or standard error rather than treating them interchangeably"). A declaration
+    #: with no recognized statistic never becomes a row in this table at all
+    #: (``app.time_series.parser``'s own disclosed finding).
+    statistic_kind: Mapped[UncertaintyStatisticKind] = mapped_column(
+        _UNCERTAINTY_STATISTIC_KIND, nullable=False
+    )
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit: Mapped[str | None] = mapped_column(String)
+    description: Mapped[str | None] = mapped_column(Text)
+
+    dataset: Mapped[TimeSeriesDataset] = relationship(
+        back_populates="measurement_uncertainty_columns"
+    )
 
 
 class TimeSeriesDatasetRow(Base):
@@ -193,7 +302,30 @@ class TimeSeriesDatasetRow(Base):
     #: string|null}, ...}`` -- one entry per ``TimeSeriesMeasurementColumn`` of this dataset.
     measurements: Mapped[str] = mapped_column(Text, nullable=False)
 
+    #: Identical shape to ``measurements`` -- one entry per
+    #: ``TimeSeriesIndependentVariableColumn`` of this dataset (docs/29 §4, docs/31). Defaults
+    #: to ``"{}"`` for every dataset saved before this increment, and for any workbook that
+    #: never declares an independent-variable column -- byte-identical to every prior import.
+    independent_variables: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}", server_default="{}"
+    )
+
+    #: Identical shape to ``independent_variables`` -- one entry per
+    #: ``TimeSeriesMeasurementUncertaintyColumn`` of this dataset, keyed by the **measurement
+    #: column name it describes** (docs/32). Defaults to ``"{}"`` for every dataset saved
+    #: before this increment and for any workbook that never declares an uncertainty column --
+    #: byte-identical to every prior import.
+    measurement_uncertainty: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}", server_default="{}"
+    )
+
     dataset: Mapped[TimeSeriesDataset] = relationship(back_populates="rows")
 
 
-__all__ = ["TimeSeriesDataset", "TimeSeriesDatasetRow", "TimeSeriesMeasurementColumn"]
+__all__ = [
+    "TimeSeriesDataset",
+    "TimeSeriesDatasetRow",
+    "TimeSeriesIndependentVariableColumn",
+    "TimeSeriesMeasurementColumn",
+    "TimeSeriesMeasurementUncertaintyColumn",
+]

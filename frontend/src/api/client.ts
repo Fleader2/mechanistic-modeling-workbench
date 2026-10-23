@@ -1,12 +1,24 @@
 import type {
+  AddArmRequest,
+  AddExperimentRequest,
+  AddParameterRoleRequest,
+  AddVariableBindingRequest,
   AliasMappingDetail,
   AliasMappingRevisionSummary,
   BoundaryPortItem,
+  CalibrationJobDetail,
+  CalibrationJobRevisionDetail,
+  CalibrationJobRevisionSummary,
+  CalibrationJobSummary,
+  CalibrationReviewResult,
+  CompleteReviewRequest,
+  DeclareModelRelationshipRequest,
   EditModuleSetDraftMemberRequest,
   HierarchicalRunSummary,
   ModelDetail,
   ModelLineage,
   ModelListItem,
+  ModelRelationshipItem,
   ModuleSetDraftDetail,
   ModuleSetDraftValidationFindingItem,
   ModuleSetDraftValidationResult,
@@ -18,6 +30,10 @@ import type {
   ProjectListItem,
   SaveAliasMappingRequest,
   SaveModuleSetDraftRequest,
+  SetExperimentMappingRequest,
+  SetExperimentObjectiveWeightingRequest,
+  SetExperimentOutputWeightingRequest,
+  SetExperimentRoleRequest,
   SubmitBoundaryDecisionRequest,
   SubmitModuleSetSimulationRequest,
   SubprojectDetail,
@@ -60,7 +76,7 @@ export class ApiRequestError extends Error {
 
 async function request<T>(
   path: string,
-  init?: { method?: "GET" | "POST" | "PATCH"; body?: unknown },
+  init?: { method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; body?: unknown },
 ): Promise<T> {
   let response: Response;
   try {
@@ -541,5 +557,280 @@ export function getAliasMappingRevision(
 ): Promise<AliasMappingDetail> {
   return request<AliasMappingDetail>(
     `${aliasMappingPath(projectId, studyId, datasetId, modelId)}/revisions/${revisionNumber}`,
+  );
+}
+
+// Joint Calibration Workflow, configuration-only increment. Mirrors
+// app/api/v1/routes/calibration.py. See docs/29_joint_calibration_workflow_design.md and
+// docs/30_joint_calibration_configuration_increment.md.
+
+function jobsPath(projectId: string, studyId: string): string {
+  return `${studyPath(projectId, studyId)}/calibration-jobs`;
+}
+
+function jobPath(projectId: string, studyId: string, jobId: string): string {
+  return `${jobsPath(projectId, studyId)}/${encodeURIComponent(jobId)}`;
+}
+
+export function declareModelRelationship(
+  projectId: string,
+  studyId: string,
+  body: DeclareModelRelationshipRequest,
+): Promise<ModelRelationshipItem> {
+  return request<ModelRelationshipItem>(`${studyPath(projectId, studyId)}/model-relationships`, {
+    method: "POST",
+    body,
+  });
+}
+
+export function createCalibrationJob(
+  projectId: string,
+  studyId: string,
+  createdBy?: string | null,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(jobsPath(projectId, studyId), {
+    method: "POST",
+    body: { created_by: createdBy ?? null },
+  });
+}
+
+export function listCalibrationJobs(
+  projectId: string,
+  studyId: string,
+): Promise<CalibrationJobSummary[]> {
+  return request<CalibrationJobSummary[]>(jobsPath(projectId, studyId));
+}
+
+export function getCalibrationJob(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(jobPath(projectId, studyId, jobId));
+}
+
+export function listCalibrationJobModelRelationships(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+): Promise<ModelRelationshipItem[]> {
+  return request<ModelRelationshipItem[]>(
+    `${jobPath(projectId, studyId, jobId)}/model-relationships`,
+  );
+}
+
+export function addCalibrationArm(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  body: AddArmRequest,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(`${jobPath(projectId, studyId, jobId)}/arms`, {
+    method: "POST",
+    body,
+  });
+}
+
+export function removeCalibrationArm(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  armId: string,
+  expectedEditVersion: number,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/arms/${encodeURIComponent(armId)}` +
+      `?expected_edit_version=${expectedEditVersion}`,
+    { method: "DELETE" },
+  );
+}
+
+export function addCalibrationExperiment(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  armId: string,
+  body: AddExperimentRequest,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/arms/${encodeURIComponent(armId)}/experiments`,
+    { method: "POST", body },
+  );
+}
+
+export function removeCalibrationExperiment(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  experimentId: string,
+  expectedEditVersion: number,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/experiments/${encodeURIComponent(experimentId)}` +
+      `?expected_edit_version=${expectedEditVersion}`,
+    { method: "DELETE" },
+  );
+}
+
+export function setCalibrationExperimentMapping(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  experimentId: string,
+  body: SetExperimentMappingRequest,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/experiments/${encodeURIComponent(experimentId)}/mapping`,
+    { method: "PATCH", body },
+  );
+}
+
+export function setCalibrationExperimentRole(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  experimentId: string,
+  body: SetExperimentRoleRequest,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/experiments/${encodeURIComponent(experimentId)}/role`,
+    { method: "PATCH", body },
+  );
+}
+
+export function setCalibrationExperimentObjectiveWeighting(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  experimentId: string,
+  body: SetExperimentObjectiveWeightingRequest,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/experiments/${encodeURIComponent(experimentId)}` +
+      "/objective-weighting",
+    { method: "PATCH", body },
+  );
+}
+
+export function setCalibrationExperimentOutputWeighting(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  experimentId: string,
+  body: SetExperimentOutputWeightingRequest,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/experiments/${encodeURIComponent(experimentId)}` +
+      "/output-weightings",
+    { method: "PUT", body },
+  );
+}
+
+export function removeCalibrationExperimentOutputWeighting(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  weightingId: string,
+  expectedEditVersion: number,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/output-weightings/${encodeURIComponent(weightingId)}` +
+      `?expected_edit_version=${expectedEditVersion}`,
+    { method: "DELETE" },
+  );
+}
+
+export function addCalibrationVariableBinding(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  experimentId: string,
+  body: AddVariableBindingRequest,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/experiments/${encodeURIComponent(experimentId)}` +
+      "/variable-bindings",
+    { method: "POST", body },
+  );
+}
+
+export function removeCalibrationVariableBinding(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  bindingId: string,
+  expectedEditVersion: number,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/variable-bindings/${encodeURIComponent(bindingId)}` +
+      `?expected_edit_version=${expectedEditVersion}`,
+    { method: "DELETE" },
+  );
+}
+
+export function addCalibrationParameterRole(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  body: AddParameterRoleRequest,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(`${jobPath(projectId, studyId, jobId)}/parameter-roles`, {
+    method: "POST",
+    body,
+  });
+}
+
+export function removeCalibrationParameterRole(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  roleId: string,
+  expectedEditVersion: number,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/parameter-roles/${encodeURIComponent(roleId)}` +
+      `?expected_edit_version=${expectedEditVersion}`,
+    { method: "DELETE" },
+  );
+}
+
+export function previewCalibrationReview(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+): Promise<CalibrationReviewResult> {
+  return request<CalibrationReviewResult>(`${jobPath(projectId, studyId, jobId)}/review`);
+}
+
+export function completeCalibrationReview(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  body: CompleteReviewRequest,
+): Promise<CalibrationReviewResult> {
+  return request<CalibrationReviewResult>(
+    `${jobPath(projectId, studyId, jobId)}/complete-review`,
+    { method: "POST", body },
+  );
+}
+
+export function listCalibrationJobRevisions(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+): Promise<CalibrationJobRevisionSummary[]> {
+  return request<CalibrationJobRevisionSummary[]>(
+    `${jobPath(projectId, studyId, jobId)}/revisions`,
+  );
+}
+
+export function getCalibrationJobRevision(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  revisionNumber: number,
+): Promise<CalibrationJobRevisionDetail> {
+  return request<CalibrationJobRevisionDetail>(
+    `${jobPath(projectId, studyId, jobId)}/revisions/${revisionNumber}`,
   );
 }

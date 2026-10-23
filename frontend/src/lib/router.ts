@@ -42,8 +42,13 @@ export type Route =
       studyId: string;
       datasetId: string;
       modelId: string;
-    };
+    }
+  | { screen: "calibration-jobs"; projectId: string; studyId: string }
+  | { screen: "calibration-job-detail"; projectId: string; studyId: string; jobId: string };
 
+const CALIBRATION_JOB_DETAIL_PATH =
+  /^\/projects\/([^/]+)\/studies\/([^/]+)\/calibration-jobs\/([^/]+)\/?$/;
+const CALIBRATION_JOBS_PATH = /^\/projects\/([^/]+)\/studies\/([^/]+)\/calibration-jobs\/?$/;
 const ALIAS_MAPPING_PATH =
   /^\/projects\/([^/]+)\/studies\/([^/]+)\/datasets\/time-series\/([^/]+)\/alias-mapping\/([^/]+)\/?$/;
 const TIME_SERIES_DATASET_DETAIL_PATH =
@@ -67,6 +72,23 @@ const PROJECT_DETAIL_PATH = /^\/projects\/([^/]+)\/?$/;
  * general-purpose 404 page, only the specific "unknown ..." states handled
  * inside their own screens. */
 export function parseRoute(pathname: string): Route {
+  const calibrationJobDetailMatch = CALIBRATION_JOB_DETAIL_PATH.exec(pathname);
+  if (calibrationJobDetailMatch) {
+    return {
+      screen: "calibration-job-detail",
+      projectId: decodeURIComponent(calibrationJobDetailMatch[1]),
+      studyId: decodeURIComponent(calibrationJobDetailMatch[2]),
+      jobId: decodeURIComponent(calibrationJobDetailMatch[3]),
+    };
+  }
+  const calibrationJobsMatch = CALIBRATION_JOBS_PATH.exec(pathname);
+  if (calibrationJobsMatch) {
+    return {
+      screen: "calibration-jobs",
+      projectId: decodeURIComponent(calibrationJobsMatch[1]),
+      studyId: decodeURIComponent(calibrationJobsMatch[2]),
+    };
+  }
   const aliasMappingMatch = ALIAS_MAPPING_PATH.exec(pathname);
   if (aliasMappingMatch) {
     return {

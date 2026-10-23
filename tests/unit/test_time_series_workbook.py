@@ -15,6 +15,8 @@ from tests.time_series_helpers import (
     FIXTURE_HEADERS,
     FIXTURE_ROWS,
     blank_template_bytes,
+    declare_independent_variables,
+    declare_measurement_uncertainty,
     fixture_workbook_bytes,
     populate_data_tab,
 )
@@ -221,6 +223,333 @@ class TestMeasurementColumnDeclarations:
             f.code == "MEASUREMENT_COLUMN_UNIT_UNDECLARED" and f.column_name == "glucose_mM"
             for f in parsed.findings
         )
+
+
+class TestIndependentVariableColumns:
+    """Joint Calibration Workflow prerequisite increment (docs/29 §4, docs/31)."""
+
+    def test_a_workbook_with_no_independent_variable_declarations_is_unchanged(self):
+        """Preserves every existing import byte-for-byte: with no "Independent variable
+        definitions" sub-table at all, every non-structural column is still a measurement
+        column, exactly as before this increment existed."""
+        data = populate_data_tab(
+            blank_template_bytes(), headers=("time", "glucose_mM"), rows=((0, 1.0),)
+        )
+        parsed = parse_workbook(data)
+        assert parsed.independent_variable_columns == []
+        assert [c.column_name for c in parsed.measurement_columns] == ["glucose_mM"]
+        assert parsed.rows[0].independent_variables == {}
+
+    def test_a_declared_independent_variable_column_is_excluded_from_measurement_columns(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "dose_uM", "glucose_mM"),
+            rows=((0, 10.0, 1.0),),
+        )
+        data = declare_independent_variables(
+            data, {"dose_uM": ("uM", "Drug concentration applied at t=0")}
+        )
+        parsed = parse_workbook(data)
+
+        assert [c.column_name for c in parsed.independent_variable_columns] == ["dose_uM"]
+        iv_column = parsed.independent_variable_columns[0]
+        assert iv_column.unit == "uM"
+        assert iv_column.description == "Drug concentration applied at t=0"
+
+        # Never also a measurement column, and never flagged as an undeclared measurement.
+        assert [c.column_name for c in parsed.measurement_columns] == ["glucose_mM"]
+        assert not any(f.column_name == "dose_uM" for f in parsed.findings)
+
+        assert parsed.rows[0].independent_variables["dose_uM"].value == 10.0
+        assert "dose_uM" not in parsed.rows[0].measurements
+
+    def test_an_independent_variable_cell_preserves_real_zero_and_discloses_unrecognized(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "dose_uM", "glucose_mM"),
+            rows=((0, 0.0, 1.0), (60, "garbled", 2.0)),
+        )
+        data = declare_independent_variables(data, {"dose_uM": ("uM", None)})
+        parsed = parse_workbook(data)
+
+        assert parsed.rows[0].independent_variables["dose_uM"].value == 0.0
+        assert parsed.rows[0].independent_variables["dose_uM"].status == "MEASURED"
+        assert parsed.rows[1].independent_variables["dose_uM"].status == "UNRECOGNIZED"
+        assert any(
+            f.code == "DATA_CELL_UNRECOGNIZED_VALUE" and f.column_name == "dose_uM"
+            for f in parsed.findings
+        )
+
+    def test_an_orphan_independent_variable_declaration_is_disclosed(self):
+        data = populate_data_tab(
+            blank_template_bytes(), headers=("time", "glucose_mM"), rows=((0, 1.0),)
+        )
+        data = declare_independent_variables(data, {"dose_uM": ("uM", None)})
+        parsed = parse_workbook(data)
+        assert parsed.independent_variable_columns == []
+        assert any(
+            f.code == "ORPHAN_INDEPENDENT_VARIABLE_COLUMN_DEFINITION"
+            and f.column_name == "dose_uM"
+            for f in parsed.findings
+        )
+
+
+class TestMeasurementUncertaintyColumns:
+    """Calibration configuration close-out increment (docs/29 §5, docs/32)."""
+
+    def test_a_workbook_with_no_uncertainty_declarations_is_unchanged(self):
+        data = populate_data_tab(
+            blank_template_bytes(), headers=("time", "glucose_mM"), rows=((0, 1.0),)
+        )
+        parsed = parse_workbook(data)
+        assert parsed.measurement_uncertainty_columns == []
+        assert [c.column_name for c in parsed.measurement_columns] == ["glucose_mM"]
+        assert parsed.rows[0].measurement_uncertainty == {}
+
+    def test_a_declared_uncertainty_column_is_excluded_from_measurement_columns(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM", "glucose_mM__sigma"),
+            rows=((0, 1.0, 0.1),),
+        )
+        data = declare_measurement_uncertainty(
+            data, {"glucose_mM__sigma": ("glucose_mM", "SD", "mM", "Standard deviation")}
+        )
+        parsed = parse_workbook(data)
+
+        assert [c.column_name for c in parsed.measurement_uncertainty_columns] == [
+            "glucose_mM__sigma"
+        ]
+        uncertainty_column = parsed.measurement_uncertainty_columns[0]
+        assert uncertainty_column.measurement_column_name == "glucose_mM"
+        assert uncertainty_column.statistic_kind == "STANDARD_DEVIATION"
+        assert uncertainty_column.unit == "mM"
+        assert uncertainty_column.description == "Standard deviation"
+
+        assert [c.column_name for c in parsed.measurement_columns] == ["glucose_mM"]
+        assert not any(f.column_name == "glucose_mM__sigma" for f in parsed.findings)
+
+        # Keyed by the *measurement* column name, never the uncertainty column's own name.
+        assert parsed.rows[0].measurement_uncertainty["glucose_mM"].value == 0.1
+        assert "glucose_mM__sigma" not in parsed.rows[0].measurements
+        assert "glucose_mM__sigma" not in parsed.rows[0].measurement_uncertainty
+
+    def test_an_uncertainty_cell_preserves_real_zero_and_discloses_unrecognized(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM", "glucose_mM__sigma"),
+            rows=((0, 1.0, 0.0), (60, 2.0, "garbled")),
+        )
+        data = declare_measurement_uncertainty(
+            data, {"glucose_mM__sigma": ("glucose_mM", "SD", None, None)}
+        )
+        parsed = parse_workbook(data)
+
+        assert parsed.rows[0].measurement_uncertainty["glucose_mM"].value == 0.0
+        assert parsed.rows[0].measurement_uncertainty["glucose_mM"].status == "MEASURED"
+        assert parsed.rows[1].measurement_uncertainty["glucose_mM"].status == "UNRECOGNIZED"
+        assert any(
+            f.code == "DATA_CELL_UNRECOGNIZED_VALUE" and f.column_name == "glucose_mM"
+            for f in parsed.findings
+        )
+
+    def test_a_negative_uncertainty_value_is_preserved_and_disclosed(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM", "glucose_mM__sigma"),
+            rows=((0, 1.0, -0.5),),
+        )
+        data = declare_measurement_uncertainty(
+            data, {"glucose_mM__sigma": ("glucose_mM", "SD", None, None)}
+        )
+        parsed = parse_workbook(data)
+
+        assert parsed.rows[0].measurement_uncertainty["glucose_mM"].value == -0.5
+        assert any(
+            f.code == "NEGATIVE_UNCERTAINTY_VALUE" and f.column_name == "glucose_mM"
+            for f in parsed.findings
+        )
+
+    def test_an_uncertainty_column_with_no_declared_target_is_disclosed_and_unused(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM", "mystery_sigma"),
+            rows=((0, 1.0, 0.1),),
+        )
+        data = declare_measurement_uncertainty(data, {"mystery_sigma": ("", "SD", None, None)})
+        parsed = parse_workbook(data)
+
+        assert parsed.measurement_uncertainty_columns == []
+        assert parsed.rows[0].measurement_uncertainty == {}
+        assert any(
+            f.code == "MEASUREMENT_UNCERTAINTY_COLUMN_MISSING_TARGET"
+            and f.column_name == "mystery_sigma"
+            for f in parsed.findings
+        )
+
+    def test_an_uncertainty_column_naming_a_nonexistent_measurement_column_is_disclosed(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM", "lactate_mM__sigma"),
+            rows=((0, 1.0, 0.1),),
+        )
+        data = declare_measurement_uncertainty(
+            data, {"lactate_mM__sigma": ("lactate_mM", "SD", None, None)}
+        )
+        parsed = parse_workbook(data)
+
+        assert parsed.measurement_uncertainty_columns == []
+        assert any(
+            f.code == "MEASUREMENT_UNCERTAINTY_COLUMN_TARGET_NOT_FOUND"
+            and f.column_name == "lactate_mM__sigma"
+            for f in parsed.findings
+        )
+
+    def test_two_uncertainty_columns_targeting_the_same_measurement_column_the_first_wins(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM", "sigma_a", "sigma_b"),
+            rows=((0, 1.0, 0.1, 0.2),),
+        )
+        data = declare_measurement_uncertainty(
+            data,
+            {
+                "sigma_a": ("glucose_mM", "SD", None, None),
+                "sigma_b": ("glucose_mM", "SD", None, None),
+            },
+        )
+        parsed = parse_workbook(data)
+
+        assert [c.column_name for c in parsed.measurement_uncertainty_columns] == ["sigma_a"]
+        assert parsed.rows[0].measurement_uncertainty["glucose_mM"].value == 0.1
+        assert any(
+            f.code == "DUPLICATE_MEASUREMENT_UNCERTAINTY_TARGET" and f.column_name == "sigma_b"
+            for f in parsed.findings
+        )
+
+    def test_an_orphan_uncertainty_declaration_is_disclosed(self):
+        data = populate_data_tab(
+            blank_template_bytes(), headers=("time", "glucose_mM"), rows=((0, 1.0),)
+        )
+        data = declare_measurement_uncertainty(
+            data, {"glucose_mM__sigma": ("glucose_mM", "SD", None, None)}
+        )
+        parsed = parse_workbook(data)
+        assert parsed.measurement_uncertainty_columns == []
+        assert any(
+            f.code == "ORPHAN_MEASUREMENT_UNCERTAINTY_COLUMN_DEFINITION"
+            and f.column_name == "glucose_mM__sigma"
+            for f in parsed.findings
+        )
+
+    def test_a_column_declared_both_independent_variable_and_uncertainty_prefers_independent(
+        self,
+    ):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM", "ambiguous_col"),
+            rows=((0, 1.0, 5.0),),
+        )
+        data = declare_independent_variables(data, {"ambiguous_col": (None, None)})
+        data = declare_measurement_uncertainty(
+            data, {"ambiguous_col": ("glucose_mM", "SD", None, None)}
+        )
+        parsed = parse_workbook(data)
+
+        assert [c.column_name for c in parsed.independent_variable_columns] == ["ambiguous_col"]
+        assert parsed.measurement_uncertainty_columns == []
+        assert parsed.rows[0].independent_variables["ambiguous_col"].value == 5.0
+        assert any(
+            f.code == "COLUMN_DECLARED_BOTH_INDEPENDENT_VARIABLE_AND_UNCERTAINTY"
+            and f.column_name == "ambiguous_col"
+            for f in parsed.findings
+        )
+
+    def test_an_uncertainty_column_with_a_blank_statistic_is_disclosed_and_unused(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM", "glucose_mM__sigma"),
+            rows=((0, 1.0, 0.1),),
+        )
+        data = declare_measurement_uncertainty(
+            data, {"glucose_mM__sigma": ("glucose_mM", None, None, None)}
+        )
+        parsed = parse_workbook(data)
+
+        assert parsed.measurement_uncertainty_columns == []
+        assert parsed.rows[0].measurement_uncertainty == {}
+        assert any(
+            f.code == "MEASUREMENT_UNCERTAINTY_COLUMN_STATISTIC_KIND_UNRECOGNIZED"
+            and f.column_name == "glucose_mM__sigma"
+            for f in parsed.findings
+        )
+
+    def test_an_uncertainty_column_with_an_unrecognized_statistic_is_disclosed_and_unused(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM", "glucose_mM__sigma"),
+            rows=((0, 1.0, 0.1),),
+        )
+        data = declare_measurement_uncertainty(
+            data, {"glucose_mM__sigma": ("glucose_mM", "a spread of some kind", None, None)}
+        )
+        parsed = parse_workbook(data)
+
+        assert parsed.measurement_uncertainty_columns == []
+        assert any(
+            f.code == "MEASUREMENT_UNCERTAINTY_COLUMN_STATISTIC_KIND_UNRECOGNIZED"
+            and f.column_name == "glucose_mM__sigma"
+            for f in parsed.findings
+        )
+
+    def test_variance_and_standard_error_statistic_kinds_are_each_recognized(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM", "var_col"),
+            rows=((0, 1.0, 0.1),),
+        )
+        data = declare_measurement_uncertainty(
+            data, {"var_col": ("glucose_mM", "variance", None, None)}
+        )
+        parsed = parse_workbook(data)
+        assert [c.statistic_kind for c in parsed.measurement_uncertainty_columns] == ["VARIANCE"]
+
+        data2 = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM", "se_col"),
+            rows=((0, 1.0, 0.2),),
+        )
+        data2 = declare_measurement_uncertainty(
+            data2, {"se_col": ("glucose_mM", "Standard Error", None, None)}
+        )
+        parsed2 = parse_workbook(data2)
+        assert [c.statistic_kind for c in parsed2.measurement_uncertainty_columns] == [
+            "STANDARD_ERROR"
+        ]
+
+    def test_a_non_finite_measurement_cell_is_unrecognized_never_measured(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM"),
+            rows=((0, "inf"), (60, "-inf"), (120, "nan")),
+        )
+        parsed = parse_workbook(data)
+        for row in parsed.rows:
+            assert row.measurements["glucose_mM"].status == "UNRECOGNIZED"
+            assert row.measurements["glucose_mM"].value is None
+
+    def test_a_non_finite_uncertainty_cell_is_unrecognized_never_measured(self):
+        data = populate_data_tab(
+            blank_template_bytes(),
+            headers=("time", "glucose_mM", "glucose_mM__sigma"),
+            rows=((0, 1.0, "inf"),),
+        )
+        data = declare_measurement_uncertainty(
+            data, {"glucose_mM__sigma": ("glucose_mM", "SD", None, None)}
+        )
+        parsed = parse_workbook(data)
+        assert parsed.rows[0].measurement_uncertainty["glucose_mM"].status == "UNRECOGNIZED"
+        assert parsed.rows[0].measurement_uncertainty["glucose_mM"].value is None
 
 
 class TestConditionLegend:

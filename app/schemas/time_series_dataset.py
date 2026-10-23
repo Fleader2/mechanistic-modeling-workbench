@@ -12,7 +12,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.models.enums import MeasurementValueStatus
+from app.models.enums import MeasurementValueStatus, UncertaintyStatisticKind
 from app.models.time_series_dataset import TimeSeriesDataset
 from app.time_series.panels import group_columns_into_panels
 from app.time_series.parser import Finding, ParsedWorkbook
@@ -75,6 +75,33 @@ class TimeSeriesMeasurementColumnItem(BaseModel):
     declared_in_metadata: bool
 
 
+class TimeSeriesIndependentVariableColumnItem(BaseModel):
+    """Joint Calibration Workflow prerequisite increment (docs/29 §4, docs/31) -- a Data-tab
+    column explicitly declared as a model input, never an observed output. Unlike
+    ``TimeSeriesMeasurementColumnItem`` there is no ``declared_in_metadata`` flag: a column
+    only ever appears here *because* it was declared (see ``app.time_series.parser`` module
+    docstring)."""
+
+    column_name: str
+    display_order: int
+    unit: str | None
+    description: str | None
+
+
+class TimeSeriesMeasurementUncertaintyColumnItem(BaseModel):
+    """Calibration configuration close-out increment (docs/29 §5, docs/32) -- a Data-tab
+    column explicitly declared as already-computed, observation-level uncertainty for one
+    specific measurement column. Like ``TimeSeriesIndependentVariableColumnItem``, there is no
+    ``declared_in_metadata`` flag: a column only ever appears here *because* it was declared."""
+
+    column_name: str
+    measurement_column_name: str
+    statistic_kind: UncertaintyStatisticKind
+    display_order: int
+    unit: str | None
+    description: str | None
+
+
 class TimeSeriesMeasurementValueItem(BaseModel):
     status: MeasurementValueStatus
     value: float | None
@@ -91,6 +118,13 @@ class TimeSeriesDataRowItem(BaseModel):
     time_value: float | None
     time_raw: str | None
     measurements: dict[str, TimeSeriesMeasurementValueItem]
+    #: Mirrors ``measurements`` exactly -- one entry per declared independent-variable column.
+    #: Empty for any dataset saved before this increment.
+    independent_variables: dict[str, TimeSeriesMeasurementValueItem] = {}
+    #: Mirrors ``measurements`` exactly -- one entry per declared measurement-uncertainty
+    #: column, keyed by the measurement column name it describes (docs/32). Empty for any
+    #: dataset saved before this increment.
+    measurement_uncertainty: dict[str, TimeSeriesMeasurementValueItem] = {}
 
 
 class TimeSeriesUnitPanelGroup(BaseModel):
@@ -131,6 +165,10 @@ class TimeSeriesWorkbookPreview(BaseModel):
     metadata: dict[str, str | None]
     condition_legend: list[TimeSeriesConditionLegendItem]
     measurement_columns: list[TimeSeriesMeasurementColumnItem]
+    #: Joint Calibration Workflow prerequisite increment (docs/29 §4, docs/31).
+    independent_variable_columns: list[TimeSeriesIndependentVariableColumnItem] = []
+    #: Calibration configuration close-out increment (docs/29 §5, docs/32).
+    measurement_uncertainty_columns: list[TimeSeriesMeasurementUncertaintyColumnItem] = []
     #: Computed fresh on every response, never persisted -- a pure, deterministic function of
     #: this same response's own ``measurement_columns`` (see ``_build_unit_panels``).
     unit_panels: list[TimeSeriesUnitPanelGroup]
@@ -160,6 +198,26 @@ class TimeSeriesWorkbookPreview(BaseModel):
                 for cid, desc in parsed.condition_legend
             ],
             measurement_columns=measurement_columns,
+            independent_variable_columns=[
+                TimeSeriesIndependentVariableColumnItem(
+                    column_name=c.column_name,
+                    display_order=c.display_order,
+                    unit=c.unit,
+                    description=c.description,
+                )
+                for c in parsed.independent_variable_columns
+            ],
+            measurement_uncertainty_columns=[
+                TimeSeriesMeasurementUncertaintyColumnItem(
+                    column_name=c.column_name,
+                    measurement_column_name=c.measurement_column_name,
+                    statistic_kind=c.statistic_kind,
+                    display_order=c.display_order,
+                    unit=c.unit,
+                    description=c.description,
+                )
+                for c in parsed.measurement_uncertainty_columns
+            ],
             unit_panels=_build_unit_panels(measurement_columns),
             rows=[
                 TimeSeriesDataRowItem(
@@ -176,6 +234,18 @@ class TimeSeriesWorkbookPreview(BaseModel):
                             status=mv.status, value=mv.value, raw=mv.raw
                         )
                         for name, mv in r.measurements.items()
+                    },
+                    independent_variables={
+                        name: TimeSeriesMeasurementValueItem(
+                            status=mv.status, value=mv.value, raw=mv.raw
+                        )
+                        for name, mv in r.independent_variables.items()
+                    },
+                    measurement_uncertainty={
+                        name: TimeSeriesMeasurementValueItem(
+                            status=mv.status, value=mv.value, raw=mv.raw
+                        )
+                        for name, mv in r.measurement_uncertainty.items()
                     },
                 )
                 for r in parsed.rows
@@ -231,6 +301,26 @@ class TimeSeriesDatasetDetail(BaseModel):
             )
             for c in dataset.measurement_columns
         ]
+        independent_variable_columns = [
+            TimeSeriesIndependentVariableColumnItem(
+                column_name=c.column_name,
+                display_order=c.display_order,
+                unit=c.unit,
+                description=c.description,
+            )
+            for c in dataset.independent_variable_columns
+        ]
+        measurement_uncertainty_columns = [
+            TimeSeriesMeasurementUncertaintyColumnItem(
+                column_name=c.column_name,
+                measurement_column_name=c.measurement_column_name,
+                statistic_kind=c.statistic_kind,
+                display_order=c.display_order,
+                unit=c.unit,
+                description=c.description,
+            )
+            for c in dataset.measurement_uncertainty_columns
+        ]
         rows = [
             TimeSeriesDataRowItem(
                 row_index=r.row_index,
@@ -245,6 +335,14 @@ class TimeSeriesDatasetDetail(BaseModel):
                     name: TimeSeriesMeasurementValueItem.model_validate(value)
                     for name, value in json.loads(r.measurements).items()
                 },
+                independent_variables={
+                    name: TimeSeriesMeasurementValueItem.model_validate(value)
+                    for name, value in json.loads(r.independent_variables or "{}").items()
+                },
+                measurement_uncertainty={
+                    name: TimeSeriesMeasurementValueItem.model_validate(value)
+                    for name, value in json.loads(r.measurement_uncertainty or "{}").items()
+                },
             )
             for r in dataset.rows
         ]
@@ -254,6 +352,8 @@ class TimeSeriesDatasetDetail(BaseModel):
             metadata=metadata,
             condition_legend=condition_legend,
             measurement_columns=measurement_columns,
+            independent_variable_columns=independent_variable_columns,
+            measurement_uncertainty_columns=measurement_uncertainty_columns,
             unit_panels=_build_unit_panels(measurement_columns),
             rows=rows,
             findings=TimeSeriesFindingItem.from_json_list(dataset.validation_findings),
@@ -302,7 +402,9 @@ __all__ = [
     "TimeSeriesDatasetDetail",
     "TimeSeriesDatasetListItem",
     "TimeSeriesFindingItem",
+    "TimeSeriesIndependentVariableColumnItem",
     "TimeSeriesMeasurementColumnItem",
+    "TimeSeriesMeasurementUncertaintyColumnItem",
     "TimeSeriesMeasurementValueItem",
     "TimeSeriesUnitPanelGroup",
     "TimeSeriesWorkbookPreview",

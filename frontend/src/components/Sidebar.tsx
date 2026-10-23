@@ -59,11 +59,14 @@ export function Sidebar({ route, project, study }: SidebarProps) {
     route.screen === "module-set-version";
   const onTimeSeriesDatasetsSection =
     route.screen === "time-series-datasets" || route.screen === "time-series-dataset-detail";
+  const onCalibrationJobsSection =
+    route.screen === "calibration-jobs" || route.screen === "calibration-job-detail";
   const studyScoped =
     onStudyDetail ||
     route.screen === "model-detail" ||
     onModuleSetsSection ||
-    onTimeSeriesDatasetsSection;
+    onTimeSeriesDatasetsSection ||
+    onCalibrationJobsSection;
   const projectId = studyScoped ? route.projectId : null;
   const studyId = studyScoped ? route.studyId : null;
 
@@ -145,6 +148,18 @@ export function Sidebar({ route, project, study }: SidebarProps) {
               className="sidebar-nav-item"
             >
               All datasets
+            </RouterLink>
+          )}
+          {onCalibrationJobsSection ? (
+            <span className="sidebar-nav-item active" aria-current="page">
+              Calibration jobs
+            </span>
+          ) : (
+            <RouterLink
+              to={`/projects/${projectId}/studies/${studyId}/calibration-jobs`}
+              className="sidebar-nav-item"
+            >
+              Calibration jobs
             </RouterLink>
           )}
           {STUDY_SCOPED_DISABLED_ITEMS.map((label) => (

@@ -66,6 +66,15 @@ class ModelAntimonyVerificationResult:
     error: ModelAntimonyVerificationError | None
     summary: str
     replayed: bool = False
+    #: Joint Calibration Workflow prerequisite increment (docs/29 §1 row 15, docs/31): every
+    #: real, compiled global parameter id -- appended, defaulted to ``()`` for the identical
+    #: backward-compatibility reason the harness's own sibling dataclass states.
+    global_parameter_ids: tuple[str, ...] = ()
+    #: The subset of ``global_parameter_ids`` an SBML assignment rule actually computes --
+    #: never independently settable/fittable. See the harness's own
+    #: ``app.harness.runners.run_agent3_inspect_antimony_model`` for exactly how this is
+    #: determined.
+    assignment_rule_derived_parameter_ids: tuple[str, ...] = ()
 
 
 def request_to_dict(request: ModelAntimonyVerificationRequest) -> dict:
@@ -107,6 +116,10 @@ def result_from_dict(data: dict) -> ModelAntimonyVerificationResult:
         error=error,
         summary=data.get("summary", ""),
         replayed=bool(data.get("replayed", False)),
+        global_parameter_ids=tuple(data.get("global_parameter_ids", ())),
+        assignment_rule_derived_parameter_ids=tuple(
+            data.get("assignment_rule_derived_parameter_ids", ())
+        ),
     )
 
 

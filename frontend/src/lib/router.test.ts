@@ -297,3 +297,20 @@ test("a dataset-model-alias-mapping path never matches the shorter time-series-d
   );
   assert.notEqual(route.screen, "time-series-dataset-detail");
 });
+
+test("/projects/<id>/studies/<id>/calibration-jobs resolves to the calibration-jobs screen", () => {
+  assert.deepEqual(parseRoute("/projects/abc-123/studies/xyz-789/calibration-jobs"), {
+    screen: "calibration-jobs",
+    projectId: "abc-123",
+    studyId: "xyz-789",
+  });
+});
+
+test("/projects/<id>/studies/<id>/calibration-jobs/<id> resolves to the calibration-job-detail screen", () => {
+  assert.deepEqual(parseRoute("/projects/abc-123/studies/xyz-789/calibration-jobs/job-1"), {
+    screen: "calibration-job-detail",
+    projectId: "abc-123",
+    studyId: "xyz-789",
+    jobId: "job-1",
+  });
+});

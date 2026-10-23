@@ -12,6 +12,8 @@ import { ModuleSetMemberExecutionScreen } from "./components/ModuleSetMemberExec
 import { TimeSeriesDatasetsListScreen } from "./components/TimeSeriesDatasetsListScreen";
 import { TimeSeriesDatasetDetailScreen } from "./components/TimeSeriesDatasetDetailScreen";
 import { AliasMappingScreen } from "./components/AliasMappingScreen";
+import { CalibrationJobsListScreen } from "./components/CalibrationJobsListScreen";
+import { CalibrationJobScreen } from "./components/CalibrationJobScreen";
 import { Sidebar } from "./components/Sidebar";
 
 /** App shell: persistent header + left sidebar, matching the Figma file's
@@ -43,6 +45,8 @@ export function App() {
     "time-series-datasets",
     "time-series-dataset-detail",
     "dataset-model-alias-mapping",
+    "calibration-jobs",
+    "calibration-job-detail",
   ];
   const showProjectMode = studyScopedScreens.includes(route.screen);
   const showStudyScope = route.screen !== "projects" && route.screen !== "project-detail";
@@ -142,6 +146,23 @@ export function App() {
               studyId={route.studyId}
               datasetId={route.datasetId}
               modelId={route.modelId}
+              onProjectChange={handleProjectChange}
+              onStudyChange={handleStudyChange}
+            />
+          )}
+          {route.screen === "calibration-jobs" && (
+            <CalibrationJobsListScreen
+              projectId={route.projectId}
+              studyId={route.studyId}
+              onProjectChange={handleProjectChange}
+              onStudyChange={handleStudyChange}
+            />
+          )}
+          {route.screen === "calibration-job-detail" && (
+            <CalibrationJobScreen
+              projectId={route.projectId}
+              studyId={route.studyId}
+              jobId={route.jobId}
               onProjectChange={handleProjectChange}
               onStudyChange={handleStudyChange}
             />

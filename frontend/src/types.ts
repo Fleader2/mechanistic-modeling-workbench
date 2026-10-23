@@ -475,3 +475,289 @@ export interface SaveAliasMappingRequest {
   assignments: SaveAliasMappingAssignmentRequest[];
   saved_by?: string | null;
 }
+
+// Mirrors app/schemas/calibration.py (Joint Calibration Workflow, configuration-only
+// increment, plus the docs/31 configuration-prerequisites revision on top of it). See
+// docs/29_joint_calibration_workflow_design.md, docs/30_joint_calibration_configuration
+// _increment.md, docs/31_joint_calibration_configuration_prerequisites_increment.md.
+
+export type CalibrationJobStatus = "DRAFT" | "REVIEWED";
+export type CalibrationExperimentRole = "CALIBRATION" | "HELD_OUT_VALIDATION";
+// docs/32_calibration_configuration_close_out_increment.md's own minimal error/weighting
+// contract supersedes the first revision's DECLARED_SIGMA (free-text-only) policy value.
+export type CalibrationObjectiveWeighting = "UNWEIGHTED" | "INVERSE_VARIANCE";
+export type CalibrationBindingModelMeaning =
+  | "INITIAL_VALUE"
+  | "PARAMETER_OVERRIDE"
+  | "INTERVENTION";
+export type CalibrationBindingValueSource = "CONSTANT" | "DATASET_COLUMN";
+export type CalibrationUncertaintySource = "MEASURED" | "USER_ASSUMED" | "UNKNOWN";
+// A standard deviation, a variance, and a standard error are not interchangeable (docs/32) --
+// required wherever a real uncertainty value is captured.
+export type UncertaintyStatisticKind = "STANDARD_DEVIATION" | "VARIANCE" | "STANDARD_ERROR";
+export type CalibrationParameterRoleKind =
+  | "MODEL_SPECIFIC"
+  | "FIXED"
+  | "EXACT_EQUALITY"
+  | "EXACT_AFFINE_LINK"
+  | "SOFT_PRIOR_LINK";
+export type CalibrationFindingSeverity = "INFO" | "WARNING" | "ERROR";
+export type CalibrationFindingCategory =
+  | "CALIBRATION_VALIDATION_DATASET_REUSE"
+  | "INCOMPATIBLE_EXPERIMENTS_MERGED"
+  | "DATASET_REUSED_ACROSS_DIFFERENT_MODELS"
+  | "PARAMETER_ROLE_CYCLE"
+  | "UNRESOLVED_LINK_REFERENCE"
+  | "AMBIGUOUS_SAME_NAME_PARAMETER"
+  | "UNIT_INCOMPATIBLE_LINK"
+  | "ARM_WITHOUT_MAPPED_EXPERIMENT"
+  | "NO_FREE_PARAMETER_TO_FIT"
+  | "INVERSE_VARIANCE_WEIGHTING_REQUIRES_KNOWN_UNCERTAINTY"
+  | "OUTPUT_WEIGHT_AND_UNCERTAINTY_SCALING_BOTH_APPLY"
+  | "UNWEIGHTED_POLICY_IGNORES_DECLARED_UNCERTAINTY"
+  | "MEASURED_UNCERTAINTY_NOT_STRICTLY_POSITIVE";
+export type ModelRelationshipKind = "VARIANT_OF" | "SHARES_STRUCTURE_WITH";
+
+export interface VariableBindingItem {
+  id: string;
+  model_meaning: CalibrationBindingModelMeaning;
+  target_component_id: string;
+  value_source: CalibrationBindingValueSource;
+  constant_value: string | null;
+  constant_unit: string | null;
+  source_column_name: string | null;
+  source: string | null;
+}
+
+// docs/32's minimal error/weighting contract -- one output's own declared uncertainty source
+// and relative weight.
+export interface OutputWeightingItem {
+  id: string;
+  output_column_name: string;
+  uncertainty_source: CalibrationUncertaintySource;
+  assumed_sigma_value: string | null;
+  assumed_sigma_unit: string | null;
+  assumed_sigma_statistic_kind: UncertaintyStatisticKind | null;
+  // Resolved for display regardless of source: mirrors assumed_sigma_statistic_kind for
+  // USER_ASSUMED, looked up from the dataset's own declared uncertainty column for MEASURED,
+  // null for UNKNOWN.
+  effective_statistic_kind: UncertaintyStatisticKind | null;
+  relative_output_weight: string;
+  provenance_note: string | null;
+}
+
+export interface CalibrationExperimentItem {
+  id: string;
+  time_series_dataset_id: string;
+  dataset_name: string;
+  role: CalibrationExperimentRole;
+  objective_weighting: CalibrationObjectiveWeighting;
+  weighting_notes: string | null;
+  alias_mapping_revision_id: string | null;
+  alias_mapping_revision_number: number | null;
+  mapping_is_stale: boolean;
+  variable_bindings: VariableBindingItem[];
+  // Every independent-variable column this experiment's own pinned dataset has declared --
+  // what a value_source=DATASET_COLUMN binding may legally name (docs/31).
+  available_dataset_columns: string[];
+  // Every output (measurement column) this experiment's own pinned dataset actually has --
+  // what output_column_name may legally name when declaring a weighting (docs/32).
+  available_output_columns: string[];
+  // The subset of available_output_columns for which the dataset itself declares a real
+  // measurement-uncertainty column -- i.e. where uncertainty_source=MEASURED is legal.
+  outputs_with_measured_uncertainty: string[];
+  output_weightings: OutputWeightingItem[];
+}
+
+export interface CalibrationArmItem {
+  id: string;
+  model_id: string;
+  model_name: string;
+  role_label: string | null;
+  sequence_index: number;
+  experiments: CalibrationExperimentItem[];
+}
+
+export interface CalibrationParameterRoleItem {
+  id: string;
+  parameter_name: string;
+  role: CalibrationParameterRoleKind;
+  fixed_value: string | null;
+  lower_bound: string | null;
+  upper_bound: string | null;
+  unit: string | null;
+  reference_arm_id: string | null;
+  reference_parameter_name: string | null;
+  coefficient_a: string | null;
+  coefficient_a_is_fixed: boolean;
+  coefficient_b: string | null;
+  coefficient_b_is_fixed: boolean;
+  arm_ids: string[];
+  // Whether parameter_name (and, for a link role, reference_parameter_name) was actually
+  // confirmed against a real, AVAILABLE ModelParameterCatalog at declaration time (docs/31) --
+  // false only when no such catalog existed yet; never re-evaluated against a catalog
+  // captured later.
+  catalog_validated: boolean;
+}
+
+export interface CalibrationJobDetail {
+  id: string;
+  subproject_id: string;
+  status: CalibrationJobStatus;
+  edit_version: number;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  updated_by: string | null;
+  reviewed_at: string | null;
+  arms: CalibrationArmItem[];
+  parameter_roles: CalibrationParameterRoleItem[];
+}
+
+export interface CalibrationJobSummary {
+  id: string;
+  status: CalibrationJobStatus;
+  arm_count: number;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+}
+
+// An immutable, versioned snapshot of a job's complete configuration, captured each time
+// "Complete review" succeeds -- a later draft edit never changes an earlier revision
+// (docs/31 audit item 2).
+export interface CalibrationJobRevisionSummary {
+  revision_number: number;
+  created_at: string;
+  created_by: string | null;
+  arm_count: number;
+  finding_count: number;
+}
+
+export interface CalibrationJobRevisionDetail {
+  revision_number: number;
+  created_at: string;
+  created_by: string | null;
+  snapshot: Record<string, unknown>;
+}
+
+export interface CalibrationFindingItem {
+  severity: CalibrationFindingSeverity;
+  category: CalibrationFindingCategory;
+  message: string;
+  involved_arm_ids: string[];
+  involved_experiment_ids: string[];
+  involved_parameter_role_ids: string[];
+}
+
+export interface ExecutionCapabilityItem {
+  available: boolean;
+  reason: string | null;
+  missing_capability: "WHOLE_MODEL_EXECUTION" | null;
+}
+
+export interface CalibrationReviewResult {
+  job: CalibrationJobDetail;
+  findings: CalibrationFindingItem[];
+  execution_capability: ExecutionCapabilityItem;
+}
+
+export interface ModelRelationshipItem {
+  id: string;
+  model_id_a: string;
+  model_id_b: string;
+  relationship_kind: ModelRelationshipKind;
+  role_label_a: string | null;
+  role_label_b: string | null;
+  declared_by: string | null;
+  declared_at: string;
+}
+
+export interface DeclareModelRelationshipRequest {
+  model_id_a: string;
+  model_id_b: string;
+  relationship_kind: ModelRelationshipKind;
+  role_label_a?: string | null;
+  role_label_b?: string | null;
+  declared_by?: string | null;
+}
+
+export interface AddArmRequest {
+  model_id: string;
+  role_label?: string | null;
+  expected_edit_version: number;
+  updated_by?: string | null;
+}
+
+export interface AddExperimentRequest {
+  time_series_dataset_id: string;
+  role?: CalibrationExperimentRole;
+  expected_edit_version: number;
+  updated_by?: string | null;
+}
+
+export interface SetExperimentMappingRequest {
+  alias_mapping_revision_number: number | null;
+  expected_edit_version: number;
+  updated_by?: string | null;
+}
+
+export interface SetExperimentRoleRequest {
+  role: CalibrationExperimentRole;
+  expected_edit_version: number;
+  updated_by?: string | null;
+}
+
+export interface SetExperimentObjectiveWeightingRequest {
+  objective_weighting: CalibrationObjectiveWeighting;
+  weighting_notes?: string | null;
+  expected_edit_version: number;
+  updated_by?: string | null;
+}
+
+export interface SetExperimentOutputWeightingRequest {
+  output_column_name: string;
+  uncertainty_source: CalibrationUncertaintySource;
+  assumed_sigma_value?: string | null;
+  assumed_sigma_unit?: string | null;
+  assumed_sigma_statistic_kind?: UncertaintyStatisticKind | null;
+  relative_output_weight?: string;
+  provenance_note?: string | null;
+  expected_edit_version: number;
+  updated_by?: string | null;
+}
+
+export interface AddVariableBindingRequest {
+  model_meaning: CalibrationBindingModelMeaning;
+  target_component_id: string;
+  value_source: CalibrationBindingValueSource;
+  constant_value?: string | null;
+  constant_unit?: string | null;
+  source_column_name?: string | null;
+  source?: string | null;
+  expected_edit_version: number;
+  updated_by?: string | null;
+}
+
+export interface AddParameterRoleRequest {
+  parameter_name: string;
+  role: CalibrationParameterRoleKind;
+  arm_ids: string[];
+  fixed_value?: string | null;
+  lower_bound?: string | null;
+  upper_bound?: string | null;
+  unit?: string | null;
+  reference_arm_id?: string | null;
+  reference_parameter_name?: string | null;
+  coefficient_a?: string | null;
+  coefficient_a_is_fixed?: boolean;
+  coefficient_b?: string | null;
+  coefficient_b_is_fixed?: boolean;
+  expected_edit_version: number;
+  updated_by?: string | null;
+}
+
+export interface CompleteReviewRequest {
+  expected_edit_version: number;
+  updated_by?: string | null;
+}
