@@ -617,6 +617,7 @@ def add_variable_binding(
     constant_unit: str | None = None,
     source_column_name: str | None = None,
     source: str | None = None,
+    intervention_time: Decimal | None = None,
     updated_by: str | None = None,
 ) -> CalibrationExperimentVariableBinding:
     """Add one independent-variable binding, with its own explicit model meaning (docs/31).
@@ -634,6 +635,13 @@ def add_variable_binding(
     ``TimeSeriesIndependentVariableColumn`` of this experiment's own pinned dataset -- the real
     per-row values themselves stay in that dataset's own rows, never copied here (module
     docstring's "preserve original data ... do not silently convert values").
+
+    ``intervention_time`` (Whole-Model Experimental-Scenario Evaluation increment, docs/33) is
+    **required when ``model_meaning=INTERVENTION``, forbidden otherwise** -- without it,
+    ``INTERVENTION`` would be behaviorally indistinguishable from ``INITIAL_VALUE``/
+    ``PARAMETER_OVERRIDE`` (both of which always take effect at the trajectory's own start).
+    Also enforced by a database ``CHECK`` constraint (defense in depth); this is the first,
+    actionable check a caller actually sees.
     """
     _check_version(job, expected_edit_version)
     experiment = _find_experiment(job, experiment_id)
@@ -661,6 +669,15 @@ def add_variable_binding(
                 f"dataset {experiment.time_series_dataset_id}"
             )
 
+    if model_meaning is CalibrationBindingModelMeaning.INTERVENTION:
+        if intervention_time is None:
+            raise ValueError("model_meaning=INTERVENTION requires intervention_time")
+    elif intervention_time is not None:
+        raise ValueError(
+            f"intervention_time is only valid for model_meaning=INTERVENTION, got "
+            f"{model_meaning.value!r}"
+        )
+
     binding = CalibrationExperimentVariableBinding(
         experiment=experiment,
         model_meaning=model_meaning,
@@ -670,6 +687,7 @@ def add_variable_binding(
         constant_unit=constant_unit,
         source_column_name=source_column_name,
         source=source,
+        intervention_time=intervention_time,
     )
     session.add(binding)
     job.updated_by = updated_by
@@ -1370,6 +1388,11 @@ def _build_snapshot_payload(job: CalibrationJob, findings: list[CalibrationFindi
                                 ),
                                 "constant_unit": b.constant_unit,
                                 "source_column_name": b.source_column_name,
+                                "intervention_time": (
+                                    str(b.intervention_time)
+                                    if b.intervention_time is not None
+                                    else None
+                                ),
                             }
                             for b in experiment.variable_bindings
                         ],

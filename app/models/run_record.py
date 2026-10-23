@@ -33,6 +33,10 @@ if TYPE_CHECKING:
     # by name via ``relationship(foreign_keys=...)`` below, never actually evaluated as a bare
     # annotation (``from __future__ import annotations`` keeps every annotation a deferred
     # string).
+    # Whole-Model Experimental-Scenario Evaluation increment: identical type-checking-only
+    # avoidance of a real circular import (``calibration.py`` transitively imports
+    # ``model_species_catalog.py``, which itself imports ``RunRecord``).
+    from app.models.calibration import CalibrationExperiment
     from app.models.model_module import ModelModule
 
     # Module-Set Edited-Module Materialization increment: identical type-checking-only
@@ -99,6 +103,19 @@ class RunRecord(Base):
         ),
         index=True,
     )
+    #: Whole-Model Experimental-Scenario Evaluation increment: the ``CalibrationExperiment``
+    #: this run evaluated -- set only for a scenario-evaluation run (``stage=RunStage.AGENT3``,
+    #: Agent 3's own ``evaluate_scenario`` against one saved ``CalibrationJobRevision``);
+    #: ``NULL`` for every other run, including an ordinary whole-model baseline simulation.
+    calibration_experiment_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(
+            "calibration_experiment.id",
+            ondelete="RESTRICT",
+            name="fk_run_record_calibration_experiment_id_ce",
+        ),
+        index=True,
+    )
 
     stage: Mapped[RunStage] = mapped_column(_RUN_STAGE, nullable=False)
     status: Mapped[RunStatus] = mapped_column(
@@ -142,6 +159,9 @@ class RunRecord(Base):
     )
     module_set_member: Mapped[ModuleSetMember | None] = relationship(
         foreign_keys="RunRecord.module_set_member_id"
+    )
+    calibration_experiment: Mapped[CalibrationExperiment | None] = relationship(
+        foreign_keys="RunRecord.calibration_experiment_id"
     )
 
 

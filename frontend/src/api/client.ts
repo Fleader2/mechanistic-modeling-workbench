@@ -30,12 +30,14 @@ import type {
   ProjectListItem,
   SaveAliasMappingRequest,
   SaveModuleSetDraftRequest,
+  ScenarioEvaluationRunItem,
   SetExperimentMappingRequest,
   SetExperimentObjectiveWeightingRequest,
   SetExperimentOutputWeightingRequest,
   SetExperimentRoleRequest,
   SubmitBoundaryDecisionRequest,
   SubmitModuleSetSimulationRequest,
+  SubmitScenarioEvaluationRequest,
   SubprojectDetail,
   SubprojectListItem,
   TimeSeriesDatasetDetail,
@@ -832,5 +834,62 @@ export function getCalibrationJobRevision(
 ): Promise<CalibrationJobRevisionDetail> {
   return request<CalibrationJobRevisionDetail>(
     `${jobPath(projectId, studyId, jobId)}/revisions/${revisionNumber}`,
+  );
+}
+
+// Whole-Model Experimental-Scenario Evaluation increment (docs/33). Mirrors
+// app/api/v1/routes/calibration.py's own scenario-evaluation routes -- prediction only, never
+// fitting.
+
+function scenarioEvaluationsPath(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  revisionNumber: number,
+  experimentId: string,
+): string {
+  return (
+    `${jobPath(projectId, studyId, jobId)}/revisions/${revisionNumber}/experiments/` +
+    `${encodeURIComponent(experimentId)}/scenario-evaluations`
+  );
+}
+
+export function submitCalibrationScenarioEvaluation(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  revisionNumber: number,
+  experimentId: string,
+  body: SubmitScenarioEvaluationRequest,
+): Promise<ScenarioEvaluationRunItem> {
+  return request<ScenarioEvaluationRunItem>(
+    scenarioEvaluationsPath(projectId, studyId, jobId, revisionNumber, experimentId),
+    { method: "POST", body },
+  );
+}
+
+export function listCalibrationScenarioEvaluations(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  revisionNumber: number,
+  experimentId: string,
+): Promise<ScenarioEvaluationRunItem[]> {
+  return request<ScenarioEvaluationRunItem[]>(
+    scenarioEvaluationsPath(projectId, studyId, jobId, revisionNumber, experimentId),
+  );
+}
+
+export function getCalibrationScenarioEvaluation(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  revisionNumber: number,
+  experimentId: string,
+  runId: string,
+): Promise<ScenarioEvaluationRunItem> {
+  return request<ScenarioEvaluationRunItem>(
+    `${scenarioEvaluationsPath(projectId, studyId, jobId, revisionNumber, experimentId)}/` +
+      encodeURIComponent(runId),
   );
 }

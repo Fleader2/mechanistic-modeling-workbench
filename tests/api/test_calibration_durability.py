@@ -443,6 +443,7 @@ class TestDatasetColumnBindingSurvivesAnIndependentSession:
                 "target_component_id": "s_made_up_target",
                 "value_source": "DATASET_COLUMN",
                 "source_column_name": "dose_uM",
+                "intervention_time": "0",
                 "expected_edit_version": 2,
             },
         )

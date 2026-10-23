@@ -9,12 +9,14 @@ import {
   declareModelRelationship,
   getCalibrationJob,
   getCalibrationJobRevision,
+  getCalibrationScenarioEvaluation,
   getCurrentAliasMapping,
   getModelingStudy,
   getModelingStudyModels,
   getProject,
   listCalibrationJobModelRelationships,
   listCalibrationJobRevisions,
+  listCalibrationScenarioEvaluations,
   listTimeSeriesDatasets,
   previewCalibrationReview,
   removeCalibrationArm,
@@ -26,8 +28,10 @@ import {
   setCalibrationExperimentObjectiveWeighting,
   setCalibrationExperimentOutputWeighting,
   setCalibrationExperimentRole,
+  submitCalibrationScenarioEvaluation,
 } from "../api/client";
 import { createStaleGuard } from "../lib/staleGuard";
+import { formatRunStatus } from "../format";
 import { RouterLink } from "./RouterLink";
 import type {
   CalibrationArmItem,
@@ -43,6 +47,7 @@ import type {
   ModelRelationshipItem,
   OutputWeightingItem,
   ProjectDetail,
+  ScenarioEvaluationRunItem,
   SubprojectDetail,
   TimeSeriesDatasetListItem,
 } from "../types";
@@ -281,6 +286,7 @@ export function CalibrationJobScreen({
       constantUnit: string,
       sourceColumnName: string,
       source: string,
+      interventionTime: string,
     ) =>
       addCalibrationVariableBinding(projectId, studyId, jobId, experimentId, {
         model_meaning: modelMeaning,
@@ -290,6 +296,7 @@ export function CalibrationJobScreen({
         constant_unit: valueSource === "CONSTANT" ? constantUnit || null : null,
         source_column_name: valueSource === "DATASET_COLUMN" ? sourceColumnName || null : null,
         source: source || null,
+        intervention_time: modelMeaning === "INTERVENTION" ? interventionTime || null : null,
         expected_edit_version: job.edit_version,
       }),
   );
@@ -882,6 +889,7 @@ interface VariablesStepProps {
     constantUnit: string,
     sourceColumnName: string,
     source: string,
+    interventionTime: string,
   ) => void;
   onRemoveBinding: (bindingId: string) => void;
   onAddParameterRole: (
@@ -932,6 +940,7 @@ function VariablesStep({
   const [bindingConstantValue, setBindingConstantValue] = useState("");
   const [bindingConstantUnit, setBindingConstantUnit] = useState("");
   const [bindingSourceColumn, setBindingSourceColumn] = useState("");
+  const [bindingInterventionTime, setBindingInterventionTime] = useState("");
   const [weightingNotes, setWeightingNotes] = useState("");
 
   const [outputColumnName, setOutputColumnName] = useState("");
@@ -1070,6 +1079,9 @@ function VariablesStep({
                       {binding.value_source === "CONSTANT"
                         ? `${binding.constant_value ?? ""} ${binding.constant_unit ?? ""}`.trim()
                         : `column: ${binding.source_column_name ?? ""}`}
+                      {binding.intervention_time !== null
+                        ? ` @ t=${binding.intervention_time}`
+                        : ""}
                     </td>
                     <td>
                       <button
@@ -1140,12 +1152,21 @@ function VariablesStep({
                   ))}
                 </select>
               )}{" "}
+              {bindingMeaning === "INTERVENTION" ? (
+                <input
+                  type="text"
+                  placeholder="intervention time"
+                  value={bindingInterventionTime}
+                  onChange={(event) => setBindingInterventionTime(event.target.value)}
+                />
+              ) : null}{" "}
               <button
                 type="button"
                 className="secondary-button"
                 disabled={
                   !bindingComponent ||
-                  (bindingValueSource === "CONSTANT" ? !bindingConstantValue : !bindingSourceColumn)
+                  (bindingValueSource === "CONSTANT" ? !bindingConstantValue : !bindingSourceColumn) ||
+                  (bindingMeaning === "INTERVENTION" && !bindingInterventionTime)
                 }
                 onClick={() => {
                   onAddBinding(
@@ -1157,11 +1178,13 @@ function VariablesStep({
                     bindingConstantUnit,
                     bindingSourceColumn,
                     "manual",
+                    bindingInterventionTime,
                   );
                   setBindingComponent("");
                   setBindingConstantValue("");
                   setBindingConstantUnit("");
                   setBindingSourceColumn("");
+                  setBindingInterventionTime("");
                 }}
               >
                 Add binding
@@ -1651,11 +1674,232 @@ function RevisionsPanel({
         ))}
       </ul>
       {selected && (
-        <pre className="time-series-preview">
-          {JSON.stringify(selected.snapshot, null, 2)}
-        </pre>
+        <>
+          <pre className="time-series-preview">
+            {JSON.stringify(selected.snapshot, null, 2)}
+          </pre>
+          <ScenarioEvaluationPanel
+            projectId={projectId}
+            studyId={studyId}
+            jobId={jobId}
+            revisionNumber={selected.revision_number}
+            snapshot={selected.snapshot}
+          />
+        </>
       )}
     </>
+  );
+}
+
+const SCENARIO_EVALUATION_POLL_INTERVAL_MS = 3000;
+
+/** "Evaluate scenario" (Whole-Model Experimental-Scenario Evaluation increment, docs/33):
+ * given one saved revision's own experiment, explicit candidate parameter values, and an
+ * optional condition, submit a background prediction run against Agent 3 directly -- never
+ * calibration (fitting), which stays unavailable regardless (see Execution capability above).
+ * There is no Figma reference for this screen -- this layout follows
+ * ModuleSetMemberExecutionScreen's own established submit/poll/display structure. */
+function ScenarioEvaluationPanel({
+  projectId,
+  studyId,
+  jobId,
+  revisionNumber,
+  snapshot,
+}: {
+  projectId: string;
+  studyId: string;
+  jobId: string;
+  revisionNumber: number;
+  snapshot: Record<string, any>;
+}) {
+  const experiments: { id: string; dataset_label: string }[] = (snapshot.arms ?? []).flatMap(
+    (arm: any) =>
+      (arm.experiments ?? []).map((experiment: any) => ({
+        id: experiment.id,
+        dataset_label: `${arm.model_name} / experiment ${experiment.id.slice(0, 8)}`,
+      })),
+  );
+
+  const [experimentId, setExperimentId] = useState(experiments[0]?.id ?? "");
+  const [conditionId, setConditionId] = useState("");
+  const [candidateValuesText, setCandidateValuesText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [runs, setRuns] = useState<ScenarioEvaluationRunItem[]>([]);
+  const [runsError, setRunsError] = useState<string | null>(null);
+
+  const reloadRuns = useCallback(() => {
+    if (!experimentId) return;
+    listCalibrationScenarioEvaluations(projectId, studyId, jobId, revisionNumber, experimentId)
+      .then(setRuns)
+      .catch((err: unknown) => setRunsError(errorMessage(err)));
+  }, [projectId, studyId, jobId, revisionNumber, experimentId]);
+
+  useEffect(() => {
+    setRuns([]);
+    setRunsError(null);
+    reloadRuns();
+  }, [reloadRuns]);
+
+  // Poll any non-terminal run until it reaches a terminal status -- the background worker
+  // (scripts/calibration_scenario_evaluation_worker.py) runs out-of-process.
+  useEffect(() => {
+    const activeRuns = runs.filter((run) => run.status === "PENDING" || run.status === "RUNNING");
+    if (activeRuns.length === 0) return;
+    const interval = window.setInterval(() => {
+      Promise.all(
+        activeRuns.map((run) =>
+          getCalibrationScenarioEvaluation(
+            projectId,
+            studyId,
+            jobId,
+            revisionNumber,
+            experimentId,
+            run.id,
+          ),
+        ),
+      )
+        .then((refreshed) => {
+          setRuns((prev) => {
+            const byId = new Map(refreshed.map((run) => [run.id, run]));
+            return prev.map((run) => byId.get(run.id) ?? run);
+          });
+        })
+        .catch(() => {
+          // A transient poll failure is not surfaced as a page-level error -- the next poll,
+          // or a manual reload, simply tries again.
+        });
+    }, SCENARIO_EVALUATION_POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [runs, projectId, studyId, jobId, revisionNumber, experimentId]);
+
+  function parseCandidateValues(): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const line of candidateValuesText.split(/[\n,]/)) {
+      const [name, value] = line.split("=").map((part) => part.trim());
+      if (name && value) result[name] = value;
+    }
+    return result;
+  }
+
+  function handleSubmit() {
+    if (!experimentId) return;
+    setSubmitError(null);
+    setSubmitting(true);
+    submitCalibrationScenarioEvaluation(projectId, studyId, jobId, revisionNumber, experimentId, {
+      condition_id: conditionId.trim() === "" ? null : conditionId.trim(),
+      candidate_parameter_values: parseCandidateValues(),
+    })
+      .then(() => reloadRuns())
+      .catch((err: unknown) => {
+        if (err instanceof ApiRequestError && err.status === 409) {
+          setSubmitError("An identical scenario evaluation is already active.");
+          reloadRuns();
+          return;
+        }
+        setSubmitError(errorMessage(err));
+      })
+      .finally(() => setSubmitting(false));
+  }
+
+  if (experiments.length === 0) {
+    return null;
+  }
+
+  return (
+    <section aria-label="Evaluate scenario" className="time-series-preview">
+      <h4>Evaluate scenario</h4>
+      <p className="screen-subtitle">
+        Given explicit candidate parameter values, predict this experiment&apos;s own trajectory
+        against the model pinned in this revision -- prediction only, never fitting.
+      </p>
+      <p>
+        <select value={experimentId} onChange={(event) => setExperimentId(event.target.value)}>
+          {experiments.map((experiment) => (
+            <option key={experiment.id} value={experiment.id}>
+              {experiment.dataset_label}
+            </option>
+          ))}
+        </select>{" "}
+        <input
+          type="text"
+          placeholder="condition_id (optional)"
+          value={conditionId}
+          onChange={(event) => setConditionId(event.target.value)}
+        />
+      </p>
+      <p>
+        <textarea
+          placeholder={"candidate parameter values, one per line, e.g.\nk1=0.5\nk2=2.0"}
+          value={candidateValuesText}
+          onChange={(event) => setCandidateValuesText(event.target.value)}
+          rows={3}
+        />
+      </p>
+      <button
+        type="button"
+        className="primary-button"
+        disabled={submitting || !experimentId}
+        onClick={handleSubmit}
+      >
+        {submitting ? "Submitting…" : "Evaluate scenario"}
+      </button>{" "}
+      <button type="button" className="secondary-button" onClick={reloadRuns}>
+        Refresh
+      </button>
+      {submitError && (
+        <p className="status-message error" role="alert">
+          {submitError}
+        </p>
+      )}
+      {runsError && (
+        <p className="status-message error" role="alert">
+          {runsError}
+        </p>
+      )}
+      <h5>Runs</h5>
+      {runs.length === 0 && <p className="status-message">No evaluation has been submitted yet.</p>}
+      <ul>
+        {runs.map((run) => (
+          <li key={run.id}>
+            {formatRunStatus(run.status)}
+            {run.evaluation_status && ` — ${run.evaluation_status}`}
+            {run.error_summary && ` — ${run.error_summary}`}
+            {run.validation_errors && run.validation_errors.length > 0 && (
+              <ul>
+                {run.validation_errors.map((message, index) => (
+                  <li key={index}>{message}</li>
+                ))}
+              </ul>
+            )}
+            {run.observed_vs_predicted && run.observed_vs_predicted.length > 0 && (
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Output</th>
+                    <th scope="col">Row</th>
+                    <th scope="col">Observed</th>
+                    <th scope="col">Predicted</th>
+                    <th scope="col">Unit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {run.observed_vs_predicted.map((row, index) => (
+                    <tr key={index}>
+                      <td>{row.column_name ?? row.output_id}</td>
+                      <td>{row.row_id.slice(0, 8)}</td>
+                      <td>{row.observed ?? "—"}</td>
+                      <td>{row.predicted}</td>
+                      <td>{row.unit ?? ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

@@ -24,6 +24,7 @@ from app.models.calibration import (
     CalibrationParameterRole,
     CalibrationParameterRoleArm,
 )
+from app.models.calibration_scenario_evaluation import CalibrationScenarioEvaluationSnapshot
 from app.models.cross_module_diagnostic import CrossModuleDiagnostic, CrossModuleDiagnosticRun
 from app.models.dataset_model_alias_mapping import (
     DatasetModelAliasMappingAssignment,
@@ -85,6 +86,7 @@ __all__ = [
     "CalibrationJobRevision",
     "CalibrationParameterRole",
     "CalibrationParameterRoleArm",
+    "CalibrationScenarioEvaluationSnapshot",
     "CrossModuleDiagnostic",
     "CrossModuleDiagnosticRun",
     "DatasetModelAliasMappingAssignment",

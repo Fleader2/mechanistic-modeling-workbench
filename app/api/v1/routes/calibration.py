@@ -3,10 +3,17 @@ experimental data" / "Variables, parameters & experimental settings" / "Review &
 screens (``docs/29_joint_calibration_workflow_design.md``, ``docs/30
 _joint_calibration_configuration_increment.md``).
 
-No route here ever submits, runs, or simulates anything -- there is no execution capability to
-call yet (docs/29 §6). Every mutating route returns the whole, freshly-reloaded
-``CalibrationJobDetail`` so the frontend always has the job's current ``edit_version`` without
-a second round trip.
+No *configuration* route here ever submits, runs, or simulates anything -- there is no whole-
+model calibration (fitting) execution capability to call (docs/29 §6; ``execution_capability``
+stays unconditionally unavailable). Every mutating configuration route returns the whole,
+freshly-reloaded ``CalibrationJobDetail`` so the frontend always has the job's current
+``edit_version`` without a second round trip.
+
+The scenario-evaluation routes at the bottom of this file (Whole-Model Experimental-Scenario
+Evaluation increment, ``docs/33``) are the one exception, and are deliberately not calibration:
+given one saved, immutable ``CalibrationJobRevision`` and explicit candidate parameter values,
+they submit a background prediction run -- never a fit, never touching
+``execution_capability``.
 """
 
 from __future__ import annotations
@@ -18,6 +25,7 @@ from fastapi import APIRouter, status
 from app.api.deps import SessionDep
 from app.api.errors import ApiError
 from app.api.v1.routes.projects import _require_model, _require_modeling_study, _require_project
+from app.models.calibration import CalibrationExperiment, CalibrationJob
 from app.persistence.calibration import (
     CalibrationJobStaleEdit,
     CalibrationReviewBlocked,
@@ -44,10 +52,17 @@ from app.persistence.calibration import (
     set_experiment_output_weighting,
     set_experiment_role,
 )
+from app.persistence.calibration_scenario_evaluation import (
+    ScenarioEvaluationAlreadyActiveError,
+    ScenarioResolutionError,
+    list_scenario_evaluation_runs_for_experiment,
+    submit_scenario_evaluation,
+)
 from app.persistence.model_relationship import (
     declare_model_relationship,
     list_model_relationships_for_models,
 )
+from app.persistence.run_record import get_run_record
 from app.schemas.calibration import (
     AddArmRequest,
     AddExperimentRequest,
@@ -68,6 +83,10 @@ from app.schemas.calibration import (
     SetExperimentObjectiveWeightingRequest,
     SetExperimentOutputWeightingRequest,
     SetExperimentRoleRequest,
+)
+from app.schemas.calibration_scenario_evaluation import (
+    ScenarioEvaluationRunItem,
+    SubmitScenarioEvaluationRequest,
 )
 from app.schemas.common import ErrorCode
 
@@ -567,7 +586,9 @@ def remove_calibration_experiment_output_weighting(
         "relevant and actually AVAILABLE; a 422 for a name confirmed absent, or confirmed a "
         "DERIVED (assignment-rule) parameter, which is never an independent target. "
         "value_source=DATASET_COLUMN additionally requires source_column_name to name a real, "
-        "declared independent-variable column of this experiment's own pinned dataset."
+        "declared independent-variable column of this experiment's own pinned dataset. "
+        "model_meaning=INTERVENTION additionally requires intervention_time (docs/33), "
+        "forbidden for every other model_meaning."
     ),
 )
 def add_calibration_variable_binding(
@@ -593,6 +614,7 @@ def add_calibration_variable_binding(
             constant_unit=body.constant_unit,
             source_column_name=body.source_column_name,
             source=body.source,
+            intervention_time=body.intervention_time,
             expected_edit_version=body.expected_edit_version,
             updated_by=body.updated_by,
         )
@@ -846,3 +868,147 @@ def get_calibration_job_revision(
             status_code=status.HTTP_404_NOT_FOUND,
         )
     return CalibrationJobRevisionDetail.from_model(revision)
+
+
+# --- Whole-Model Experimental-Scenario Evaluation increment (docs/33) ----------------------
+
+
+def _require_revision(session: SessionDep, job_id: UUID, revision_number: int):
+    revision = get_job_revision(session, job_id, revision_number)
+    if revision is None:
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            f"No revision {revision_number} exists for calibration job {job_id}.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return revision
+
+
+def _require_experiment(job: CalibrationJob, experiment_id: UUID) -> CalibrationExperiment:
+    for arm in job.arms:
+        for experiment in arm.experiments:
+            if experiment.id == experiment_id:
+                return experiment
+    raise ApiError(
+        ErrorCode.NOT_FOUND,
+        f"No experiment exists with id {experiment_id} in calibration job {job.id}.",
+        status_code=status.HTTP_404_NOT_FOUND,
+    )
+
+
+@router.post(
+    "/{project_id}/subprojects/{subproject_id}/calibration-jobs/{job_id}/revisions"
+    "/{revision_number}/experiments/{experiment_id}/scenario-evaluations",
+    response_model=ScenarioEvaluationRunItem,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit a background whole-model scenario evaluation -- prediction, never fitting",
+    description=(
+        "Resolves one saved revision's own experiment, together with explicit candidate "
+        "parameter values, into a scenario and submits it as a background prediction run -- "
+        "returns immediately with a PENDING run, never holding this request open. A 404 for "
+        "an unknown job/revision/experiment; a 422 if the scenario cannot be unambiguously "
+        "resolved (a conflicting override, a dataset column that varies within its own scope, "
+        "an unresolvable intervention target, or no mapped output species); a 409 if a "
+        "genuinely identical scenario already has an active run."
+    ),
+)
+def submit_calibration_scenario_evaluation(
+    project_id: UUID,
+    subproject_id: UUID,
+    job_id: UUID,
+    revision_number: int,
+    experiment_id: UUID,
+    body: SubmitScenarioEvaluationRequest,
+    session: SessionDep,
+) -> ScenarioEvaluationRunItem:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    job = _require_job(session, subproject_id, job_id)
+    revision = _require_revision(session, job_id, revision_number)
+    experiment = _require_experiment(job, experiment_id)
+    try:
+        run = submit_scenario_evaluation(
+            session,
+            job=job,
+            revision=revision,
+            experiment=experiment,
+            condition_id=body.condition_id,
+            candidate_parameter_values=body.candidate_parameter_values,
+            solver_settings=body.solver_settings,
+            saved_by=body.saved_by,
+        )
+    except ScenarioEvaluationAlreadyActiveError as exc:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "An identical scenario evaluation is already active.",
+            status_code=status.HTTP_409_CONFLICT,
+            context={"existing_run_id": str(exc.existing_run.id)},
+        ) from exc
+    except ScenarioResolutionError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR, str(exc), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+        ) from exc
+    session.commit()
+    return ScenarioEvaluationRunItem.from_run(run)
+
+
+@router.get(
+    "/{project_id}/subprojects/{subproject_id}/calibration-jobs/{job_id}/revisions"
+    "/{revision_number}/experiments/{experiment_id}/scenario-evaluations",
+    response_model=list[ScenarioEvaluationRunItem],
+    summary="Every scenario-evaluation run ever submitted for one experiment",
+    description=(
+        "Newest first. Nothing is ever deleted -- a failed run remains visible, labeled "
+        "honestly, never silently retried. A 404 for an unknown job/revision/experiment."
+    ),
+)
+def list_calibration_scenario_evaluations(
+    project_id: UUID,
+    subproject_id: UUID,
+    job_id: UUID,
+    revision_number: int,
+    experiment_id: UUID,
+    session: SessionDep,
+) -> list[ScenarioEvaluationRunItem]:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    job = _require_job(session, subproject_id, job_id)
+    _require_revision(session, job_id, revision_number)
+    experiment = _require_experiment(job, experiment_id)
+    runs = list_scenario_evaluation_runs_for_experiment(session, experiment.id)
+    return [ScenarioEvaluationRunItem.from_run(run) for run in runs]
+
+
+@router.get(
+    "/{project_id}/subprojects/{subproject_id}/calibration-jobs/{job_id}/revisions"
+    "/{revision_number}/experiments/{experiment_id}/scenario-evaluations/{run_id}",
+    response_model=ScenarioEvaluationRunItem,
+    summary="Reopen one scenario-evaluation run -- its current status, or its result",
+    description=(
+        "The same shape whether PENDING/RUNNING (poll this again later) or SUCCEEDED/FAILED "
+        "(the final result, read back, never rerun). A 404 for an unknown job/revision/"
+        "experiment/run, or a run that exists but belongs to a different experiment."
+    ),
+)
+def get_calibration_scenario_evaluation(
+    project_id: UUID,
+    subproject_id: UUID,
+    job_id: UUID,
+    revision_number: int,
+    experiment_id: UUID,
+    run_id: UUID,
+    session: SessionDep,
+) -> ScenarioEvaluationRunItem:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    job = _require_job(session, subproject_id, job_id)
+    _require_revision(session, job_id, revision_number)
+    experiment = _require_experiment(job, experiment_id)
+    run = get_run_record(session, run_id)
+    if run is None or run.calibration_experiment_id != experiment.id:
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            f"No scenario-evaluation run exists with id {run_id} for experiment {experiment_id}.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return ScenarioEvaluationRunItem.from_run(run)

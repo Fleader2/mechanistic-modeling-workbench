@@ -355,6 +355,70 @@ class TestVariableBindings:
         )
         assert binding.target_component_id == "k_made_up_by_curator"
 
+    def test_an_intervention_binding_requires_intervention_time(self, db_session):
+        project_id = make_project_id(db_session)
+        subproject_id = make_subproject_id(db_session, project_id=project_id)
+        model_id = make_model_id(db_session, subproject_id=subproject_id)
+        _seed_available_species_catalog(db_session, subproject_id=subproject_id, model_id=model_id)
+        dataset = _seed_dataset(db_session, project_id=project_id, subproject_id=subproject_id)
+
+        job = create_job(db_session, subproject_id=subproject_id)
+        arm = add_arm(db_session, job=job, model_id=model_id, expected_edit_version=0)
+        experiment = add_experiment(
+            db_session, job=job, arm=arm, time_series_dataset_id=dataset.id, expected_edit_version=1
+        )
+
+        with pytest.raises(ValueError, match="requires intervention_time"):
+            add_variable_binding(
+                db_session,
+                job=job,
+                experiment_id=experiment.id,
+                model_meaning=CalibrationBindingModelMeaning.INTERVENTION,
+                target_component_id="s_aRAStot",
+                value_source=CalibrationBindingValueSource.CONSTANT,
+                constant_value=Decimal("100"),
+                expected_edit_version=2,
+            )
+
+        binding = add_variable_binding(
+            db_session,
+            job=job,
+            experiment_id=experiment.id,
+            model_meaning=CalibrationBindingModelMeaning.INTERVENTION,
+            target_component_id="s_aRAStot",
+            value_source=CalibrationBindingValueSource.CONSTANT,
+            constant_value=Decimal("100"),
+            intervention_time=Decimal("5"),
+            expected_edit_version=2,
+        )
+        assert binding.intervention_time == Decimal("5")
+
+    def test_intervention_time_is_forbidden_for_a_non_intervention_binding(self, db_session):
+        project_id = make_project_id(db_session)
+        subproject_id = make_subproject_id(db_session, project_id=project_id)
+        model_id = make_model_id(db_session, subproject_id=subproject_id)
+        _seed_available_species_catalog(db_session, subproject_id=subproject_id, model_id=model_id)
+        dataset = _seed_dataset(db_session, project_id=project_id, subproject_id=subproject_id)
+
+        job = create_job(db_session, subproject_id=subproject_id)
+        arm = add_arm(db_session, job=job, model_id=model_id, expected_edit_version=0)
+        experiment = add_experiment(
+            db_session, job=job, arm=arm, time_series_dataset_id=dataset.id, expected_edit_version=1
+        )
+
+        with pytest.raises(ValueError, match="only valid for model_meaning=INTERVENTION"):
+            add_variable_binding(
+                db_session,
+                job=job,
+                experiment_id=experiment.id,
+                model_meaning=CalibrationBindingModelMeaning.INITIAL_VALUE,
+                target_component_id="s_aRAStot",
+                value_source=CalibrationBindingValueSource.CONSTANT,
+                constant_value=Decimal("1.5"),
+                intervention_time=Decimal("5"),
+                expected_edit_version=2,
+            )
+
     def test_a_dataset_column_binding_requires_a_real_declared_independent_variable_column(
         self, db_session
     ):
@@ -386,6 +450,7 @@ class TestVariableBindings:
             target_component_id="s_aRAStot",
             value_source=CalibrationBindingValueSource.DATASET_COLUMN,
             source_column_name="dose_uM",
+            intervention_time=Decimal("0"),
             expected_edit_version=2,
         )
         assert binding.source_column_name == "dose_uM"
@@ -399,6 +464,7 @@ class TestVariableBindings:
                 target_component_id="s_aRAStot",
                 value_source=CalibrationBindingValueSource.DATASET_COLUMN,
                 source_column_name="not_a_real_column",
+                intervention_time=Decimal("0"),
                 expected_edit_version=3,
             )
 

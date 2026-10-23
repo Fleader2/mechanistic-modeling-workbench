@@ -51,6 +51,8 @@ class VariableBindingItem(BaseModel):
     constant_unit: str | None
     source_column_name: str | None
     source: str | None
+    #: Required (non-``None``) if and only if ``model_meaning=INTERVENTION`` (docs/33).
+    intervention_time: Decimal | None
 
     @classmethod
     def from_model(cls, binding: CalibrationExperimentVariableBinding) -> VariableBindingItem:
@@ -63,6 +65,7 @@ class VariableBindingItem(BaseModel):
             constant_unit=binding.constant_unit,
             source_column_name=binding.source_column_name,
             source=binding.source,
+            intervention_time=binding.intervention_time,
         )
 
 
@@ -472,6 +475,9 @@ class AddVariableBindingRequest(BaseModel):
     constant_unit: str | None = None
     source_column_name: str | None = None
     source: str | None = None
+    #: Required if and only if ``model_meaning=INTERVENTION`` (docs/33) --
+    #: ``app.persistence.calibration.add_variable_binding`` enforces this.
+    intervention_time: Decimal | None = None
     expected_edit_version: int
     updated_by: str | None = None
 

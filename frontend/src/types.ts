@@ -327,6 +327,39 @@ export interface ModuleSetSimulationRunItem {
   agent3_report: Record<string, unknown> | null;
 }
 
+// Whole-Model Experimental-Scenario Evaluation increment (docs/33). Mirrors
+// app/schemas/calibration_scenario_evaluation.py. Prediction only, never fitting.
+
+export interface SubmitScenarioEvaluationRequest {
+  condition_id?: string | null;
+  candidate_parameter_values?: Record<string, string>;
+  solver_settings?: Record<string, unknown> | null;
+  saved_by?: string | null;
+}
+
+export interface ObservedVsPredictedRow {
+  row_id: string;
+  output_id: string;
+  column_name: string | null;
+  unit: string | null;
+  observed: number | null;
+  predicted: number;
+}
+
+export interface ScenarioEvaluationRunItem {
+  id: string;
+  status: RunStatus;
+  calibration_experiment_id: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  result_summary: string | null;
+  error_summary: string | null;
+  evaluation_status: string | null;
+  validation_errors: string[] | null;
+  solver_message: string | null;
+  observed_vs_predicted: ObservedVsPredictedRow[] | null;
+}
+
 // Mirrors app/schemas/time_series_dataset.py (Downloadable Two-Tab Excel Template increment).
 // A "finding" is never a reason a save is blocked -- only a malformed workbook (rejected with
 // a 422 before anything is saved) is. See docs/25_time_series_dataset_import_increment.md.
@@ -527,6 +560,8 @@ export interface VariableBindingItem {
   constant_unit: string | null;
   source_column_name: string | null;
   source: string | null;
+  // Required if and only if model_meaning === "INTERVENTION" (docs/33).
+  intervention_time: string | null;
 }
 
 // docs/32's minimal error/weighting contract -- one output's own declared uncertainty source
@@ -735,6 +770,7 @@ export interface AddVariableBindingRequest {
   constant_unit?: string | null;
   source_column_name?: string | null;
   source?: string | null;
+  intervention_time?: string | null;
   expected_edit_version: number;
   updated_by?: string | null;
 }

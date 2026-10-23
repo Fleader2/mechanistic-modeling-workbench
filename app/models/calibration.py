@@ -31,6 +31,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -43,6 +44,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql.naming import conv
 
 from app.db.base import Base
 from app.models.dataset_model_alias_mapping import DatasetModelAliasMappingRevision
@@ -253,6 +255,13 @@ class CalibrationExperimentVariableBinding(Base):
     own "preserve original data ... do not silently convert values" requirement)."""
 
     __tablename__ = "calibration_experiment_variable_binding"
+    __table_args__ = (
+        CheckConstraint(
+            "(model_meaning = 'INTERVENTION' AND intervention_time IS NOT NULL) OR "
+            "(model_meaning != 'INTERVENTION' AND intervention_time IS NULL)",
+            name=conv("ck_calibration_experiment_variable_binding_intervention_time"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
@@ -288,6 +297,16 @@ class CalibrationExperimentVariableBinding(Base):
     #: e.g. "condition_legend" (derived from the dataset's own recorded condition) or "manual"
     #: (typed directly) -- disclosure of provenance, never interpreted.
     source: Mapped[str | None] = mapped_column(String)
+
+    #: Whole-Model Experimental-Scenario Evaluation increment (``docs/33``): the one moment
+    #: during a trajectory this binding's own value takes effect. **Required when
+    #: ``model_meaning=INTERVENTION``, forbidden otherwise** -- without this field,
+    #: ``INTERVENTION`` would be behaviorally identical to ``INITIAL_VALUE``/
+    #: ``PARAMETER_OVERRIDE`` (both of which always take effect at the trajectory's own start,
+    #: ``t=0``, and so need no explicit time of their own). Enforced both here (CHECK
+    #: constraint, see the owning migration) and in ``app.persistence.calibration
+    #: .add_variable_binding``.
+    intervention_time: Mapped[Decimal | None] = mapped_column(Numeric)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
