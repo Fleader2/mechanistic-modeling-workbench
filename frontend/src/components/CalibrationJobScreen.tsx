@@ -11,12 +11,14 @@ import {
   getCalibrationJobRevision,
   getCalibrationScenarioEvaluation,
   getCurrentAliasMapping,
+  getCurrentInitialConditionsAliasMapping,
   getModelingStudy,
   getModelingStudyModels,
   getProject,
   listCalibrationJobModelRelationships,
   listCalibrationJobRevisions,
   listCalibrationScenarioEvaluations,
+  listInitialConditionsDatasets,
   listTimeSeriesDatasets,
   previewCalibrationReview,
   removeCalibrationArm,
@@ -24,6 +26,8 @@ import {
   removeCalibrationExperimentOutputWeighting,
   removeCalibrationParameterRole,
   removeCalibrationVariableBinding,
+  setCalibrationExperimentInitialConditionsDataset,
+  setCalibrationExperimentInitialConditionsMapping,
   setCalibrationExperimentMapping,
   setCalibrationExperimentObjectiveWeighting,
   setCalibrationExperimentOutputWeighting,
@@ -31,7 +35,7 @@ import {
   submitCalibrationScenarioEvaluation,
 } from "../api/client";
 import { createStaleGuard } from "../lib/staleGuard";
-import { formatRunStatus } from "../format";
+import { formatRunStatus, formatScientific, fullPrecisionTitle } from "../format";
 import { RouterLink } from "./RouterLink";
 import type {
   CalibrationArmItem,
@@ -43,6 +47,7 @@ import type {
   CalibrationJobRevisionSummary,
   CalibrationParameterRoleKind,
   CalibrationReviewResult,
+  InitialConditionsDatasetListItem,
   ModelListItem,
   ModelRelationshipItem,
   OutputWeightingItem,
@@ -101,6 +106,9 @@ export function CalibrationJobScreen({
   });
   const [models, setModels] = useState<ModelListItem[]>([]);
   const [datasets, setDatasets] = useState<TimeSeriesDatasetListItem[]>([]);
+  const [initialConditionsDatasets, setInitialConditionsDatasets] = useState<
+    InitialConditionsDatasetListItem[]
+  >([]);
   const [relationships, setRelationships] = useState<ModelRelationshipItem[]>([]);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [step, setStep] = useState<Step>("models");
@@ -150,6 +158,9 @@ export function CalibrationJobScreen({
           });
           listTimeSeriesDatasets(projectId, studyId).then((items) => {
             if (guard.isCurrent(key)) setDatasets(items);
+          });
+          listInitialConditionsDatasets(projectId, studyId).then((items) => {
+            if (guard.isCurrent(key)) setInitialConditionsDatasets(items);
           });
 
           getCalibrationJob(projectId, studyId, jobId)
@@ -235,6 +246,26 @@ export function CalibrationJobScreen({
         expected_edit_version: job.edit_version,
       }),
   );
+  const handleSetInitialConditionsDataset = withJob(
+    (job: CalibrationJobDetail, experimentId: string, datasetId: string | null) =>
+      setCalibrationExperimentInitialConditionsDataset(projectId, studyId, jobId, experimentId, {
+        initial_conditions_dataset_id: datasetId,
+        expected_edit_version: job.edit_version,
+      }),
+  );
+  const handleRepinInitialConditionsMapping = withJob(
+    (job: CalibrationJobDetail, experimentId: string, revisionNumber: number | null) =>
+      setCalibrationExperimentInitialConditionsMapping(
+        projectId,
+        studyId,
+        jobId,
+        experimentId,
+        {
+          alias_mapping_revision_number: revisionNumber,
+          expected_edit_version: job.edit_version,
+        },
+      ),
+  );
   const handleSetObjectiveWeighting = withJob(
     (
       job: CalibrationJobDetail,
@@ -294,7 +325,10 @@ export function CalibrationJobScreen({
         value_source: valueSource,
         constant_value: valueSource === "CONSTANT" ? constantValue || null : null,
         constant_unit: valueSource === "CONSTANT" ? constantUnit || null : null,
-        source_column_name: valueSource === "DATASET_COLUMN" ? sourceColumnName || null : null,
+        source_column_name:
+          valueSource === "DATASET_COLUMN" || valueSource === "INITIAL_CONDITIONS_DATASET"
+            ? sourceColumnName || null
+            : null,
         source: source || null,
         intervention_time: modelMeaning === "INTERVENTION" ? interventionTime || null : null,
         expected_edit_version: job.edit_version,
@@ -534,9 +568,12 @@ export function CalibrationJobScreen({
         <VariablesStep
           job={job}
           allExperiments={allExperiments}
+          initialConditionsDatasets={initialConditionsDatasets}
           selectedExperimentId={selectedExperimentId}
           onSelectExperiment={setSelectedExperimentId}
           onRepinMapping={handleRepinMapping}
+          onSetInitialConditionsDataset={handleSetInitialConditionsDataset}
+          onRepinInitialConditionsMapping={handleRepinInitialConditionsMapping}
           onSetObjectiveWeighting={handleSetObjectiveWeighting}
           onSetOutputWeighting={handleSetOutputWeighting}
           onRemoveOutputWeighting={handleRemoveOutputWeighting}
@@ -861,9 +898,15 @@ function ModelsAndDataStep({
 interface VariablesStepProps {
   job: CalibrationJobDetail;
   allExperiments: { experiment: CalibrationExperimentItem; arm: CalibrationArmItem }[];
+  initialConditionsDatasets: InitialConditionsDatasetListItem[];
   selectedExperimentId: string | null;
   onSelectExperiment: (id: string | null) => void;
   onRepinMapping: (experimentId: string, revisionNumber: number | null) => void;
+  onSetInitialConditionsDataset: (experimentId: string, datasetId: string | null) => void;
+  onRepinInitialConditionsMapping: (
+    experimentId: string,
+    revisionNumber: number | null,
+  ) => void;
   onSetObjectiveWeighting: (
     experimentId: string,
     weighting: CalibrationExperimentItem["objective_weighting"],
@@ -915,9 +958,12 @@ interface VariablesStepProps {
 function VariablesStep({
   job,
   allExperiments,
+  initialConditionsDatasets,
   selectedExperimentId,
   onSelectExperiment,
   onRepinMapping,
+  onSetInitialConditionsDataset,
+  onRepinInitialConditionsMapping,
   onSetObjectiveWeighting,
   onSetOutputWeighting,
   onRemoveOutputWeighting,
@@ -942,6 +988,7 @@ function VariablesStep({
   const [bindingSourceColumn, setBindingSourceColumn] = useState("");
   const [bindingInterventionTime, setBindingInterventionTime] = useState("");
   const [weightingNotes, setWeightingNotes] = useState("");
+  const [selectedIcDatasetId, setSelectedIcDatasetId] = useState("");
 
   const [outputColumnName, setOutputColumnName] = useState("");
   const [outputUncertaintySource, setOutputUncertaintySource] =
@@ -1050,6 +1097,91 @@ function VariablesStep({
               </button>
             )}
 
+            <h4>Initial-conditions dataset</h4>
+            <p className="screen-subtitle">
+              Optional. Entirely separate from the calibration-target dataset above -- e.g. one
+              cell type&apos;s own protein/metabolite abundance profile, giving a
+              value_source=INITIAL_CONDITIONS_DATASET binding something real to read from
+              (docs/36). Pinning a different initial-conditions dataset per experiment is how
+              one model can be evaluated against different cell types.
+            </p>
+            {current.experiment.initial_conditions_dataset_id === null ? (
+              <p>
+                <select
+                  aria-label="Choose an initial-conditions dataset"
+                  value={selectedIcDatasetId}
+                  onChange={(event) => setSelectedIcDatasetId(event.target.value)}
+                >
+                  <option value="">Choose a dataset…</option>
+                  {initialConditionsDatasets.map((dataset) => (
+                    <option key={dataset.id} value={dataset.id}>
+                      {dataset.name}
+                    </option>
+                  ))}
+                </select>{" "}
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!selectedIcDatasetId}
+                  onClick={() => {
+                    if (selectedIcDatasetId) {
+                      onSetInitialConditionsDataset(current.experiment.id, selectedIcDatasetId);
+                      setSelectedIcDatasetId("");
+                    }
+                  }}
+                >
+                  Pin dataset
+                </button>
+              </p>
+            ) : (
+              <>
+                <p>
+                  {current.experiment.initial_conditions_dataset_name} — mapping:{" "}
+                  {current.experiment.initial_conditions_alias_mapping_revision_number === null
+                    ? "none yet"
+                    : `revision ${current.experiment.initial_conditions_alias_mapping_revision_number}${
+                        current.experiment.initial_conditions_mapping_is_stale
+                          ? " -- a newer revision now exists"
+                          : ""
+                      }`}
+                  {" — "}
+                  <RouterLink
+                    to={`/projects/${projectId}/studies/${studyId}/datasets/initial-conditions/${current.experiment.initial_conditions_dataset_id}/alias-mapping/${current.arm.model_id}`}
+                  >
+                    Open alias mapping
+                  </RouterLink>
+                </p>
+                {current.experiment.initial_conditions_mapping_is_stale && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() =>
+                      getCurrentInitialConditionsAliasMapping(
+                        projectId,
+                        studyId,
+                        current.experiment.initial_conditions_dataset_id as string,
+                        current.arm.model_id,
+                      ).then((mapping) =>
+                        onRepinInitialConditionsMapping(
+                          current.experiment.id,
+                          mapping.revision_number,
+                        ),
+                      )
+                    }
+                  >
+                    Re-pin to the current mapping
+                  </button>
+                )}{" "}
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => onSetInitialConditionsDataset(current.experiment.id, null)}
+                >
+                  Unpin dataset
+                </button>
+              </>
+            )}
+
             <h4>Initial conditions, interventions &amp; experiment-specific settings</h4>
             <p className="screen-subtitle">
               Every binding states its own explicit model meaning and is validated server-side
@@ -1075,12 +1207,24 @@ function VariablesStep({
                     <td>{binding.model_meaning}</td>
                     <td>{binding.target_component_id}</td>
                     <td>{binding.value_source}</td>
-                    <td>
+                    <td
+                      title={
+                        [
+                          binding.value_source === "CONSTANT" ? binding.constant_value : null,
+                          binding.intervention_time,
+                        ]
+                          .filter((v): v is string => v !== null)
+                          .map((v) => fullPrecisionTitle(v))
+                          .join(" / ") || undefined
+                      }
+                    >
                       {binding.value_source === "CONSTANT"
-                        ? `${binding.constant_value ?? ""} ${binding.constant_unit ?? ""}`.trim()
+                        ? `${binding.constant_value !== null ? formatScientific(binding.constant_value) : ""} ${
+                            binding.constant_unit ?? ""
+                          }`.trim()
                         : `column: ${binding.source_column_name ?? ""}`}
                       {binding.intervention_time !== null
-                        ? ` @ t=${binding.intervention_time}`
+                        ? ` @ t=${formatScientific(binding.intervention_time)}`
                         : ""}
                     </td>
                     <td>
@@ -1123,6 +1267,7 @@ function VariablesStep({
               >
                 <option value="CONSTANT">Constant value</option>
                 <option value="DATASET_COLUMN">Dataset column</option>
+                <option value="INITIAL_CONDITIONS_DATASET">Initial-conditions dataset</option>
               </select>{" "}
               {bindingValueSource === "CONSTANT" ? (
                 <>
@@ -1145,7 +1290,10 @@ function VariablesStep({
                   onChange={(event) => setBindingSourceColumn(event.target.value)}
                 >
                   <option value="">column…</option>
-                  {current.experiment.available_dataset_columns.map((column) => (
+                  {(bindingValueSource === "INITIAL_CONDITIONS_DATASET"
+                    ? current.experiment.available_initial_conditions_columns
+                    : current.experiment.available_dataset_columns
+                  ).map((column) => (
                     <option key={column} value={column}>
                       {column}
                     </option>
@@ -1258,14 +1406,22 @@ function VariablesStep({
                       <td>{weighting.output_column_name}</td>
                       <td>{weighting.uncertainty_source}</td>
                       <td>{weighting.effective_statistic_kind ?? "—"}</td>
-                      <td>
+                      <td
+                        title={
+                          weighting.assumed_sigma_value
+                            ? fullPrecisionTitle(weighting.assumed_sigma_value)
+                            : undefined
+                        }
+                      >
                         {weighting.assumed_sigma_value
-                          ? `${weighting.assumed_sigma_value}${
+                          ? `${formatScientific(weighting.assumed_sigma_value)}${
                               weighting.assumed_sigma_unit ? ` ${weighting.assumed_sigma_unit}` : ""
                             }`
                           : "—"}
                       </td>
-                      <td>{weighting.relative_output_weight}</td>
+                      <td title={fullPrecisionTitle(weighting.relative_output_weight)}>
+                        {formatScientific(weighting.relative_output_weight)}
+                      </td>
                       <td>{weighting.provenance_note ?? "—"}</td>
                       <td>
                         <button
@@ -1417,17 +1573,26 @@ function VariablesStep({
               <tr key={role.id}>
                 <td>{role.parameter_name}</td>
                 <td>{role.role}</td>
-                <td>
-                  {role.role === "FIXED" && `= ${role.fixed_value}`}
+                <td
+                  title={
+                    [role.fixed_value, role.coefficient_a, role.coefficient_b, role.lower_bound, role.upper_bound]
+                      .filter((v): v is string => v !== null)
+                      .map((v) => fullPrecisionTitle(v))
+                      .join(" / ") || undefined
+                  }
+                >
+                  {role.role === "FIXED" && `= ${formatScientific(role.fixed_value)}`}
                   {role.role === "EXACT_AFFINE_LINK" &&
-                    `${role.reference_parameter_name} * ${role.coefficient_a ?? "?"} + ${
-                      role.coefficient_b ?? "?"
-                    }`}
+                    `${role.reference_parameter_name} * ${
+                      role.coefficient_a !== null ? formatScientific(role.coefficient_a) : "?"
+                    } + ${role.coefficient_b !== null ? formatScientific(role.coefficient_b) : "?"}`}
                   {(role.role === "EXACT_EQUALITY" || role.role === "SOFT_PRIOR_LINK") &&
                     `= ${role.reference_parameter_name}`}
                   {role.role === "MODEL_SPECIFIC" &&
                     (role.lower_bound || role.upper_bound
-                      ? `[${role.lower_bound ?? "-inf"}, ${role.upper_bound ?? "inf"}]`
+                      ? `[${role.lower_bound !== null ? formatScientific(role.lower_bound) : "-inf"}, ${
+                          role.upper_bound !== null ? formatScientific(role.upper_bound) : "inf"
+                        }]`
                       : "free")}
                 </td>
                 <td>{role.arm_ids.length}</td>
@@ -1888,8 +2053,12 @@ function ScenarioEvaluationPanel({
                     <tr key={index}>
                       <td>{row.column_name ?? row.output_id}</td>
                       <td>{row.row_id.slice(0, 8)}</td>
-                      <td>{row.observed ?? "—"}</td>
-                      <td>{row.predicted}</td>
+                      <td title={row.observed !== null ? fullPrecisionTitle(row.observed) : undefined}>
+                        {row.observed !== null ? formatScientific(row.observed) : "—"}
+                      </td>
+                      <td title={fullPrecisionTitle(row.predicted)}>
+                        {formatScientific(row.predicted)}
+                      </td>
                       <td>{row.unit ?? ""}</td>
                     </tr>
                   ))}
@@ -1949,16 +2118,29 @@ function ReviewStep({
                     {experiment.output_weightings.length > 0 && (
                       <ul>
                         {experiment.output_weightings.map((weighting) => (
-                          <li key={weighting.id}>
+                          <li
+                            key={weighting.id}
+                            title={
+                              [
+                                weighting.assumed_sigma_value,
+                                weighting.relative_output_weight !== "1"
+                                  ? weighting.relative_output_weight
+                                  : null,
+                              ]
+                                .filter((v): v is string => v !== null)
+                                .map((v) => fullPrecisionTitle(v))
+                                .join(" / ") || undefined
+                            }
+                          >
                             {weighting.output_column_name}: {weighting.uncertainty_source}
                             {weighting.effective_statistic_kind &&
                               ` (${weighting.effective_statistic_kind})`}
                             {weighting.assumed_sigma_value &&
-                              ` (sigma ${weighting.assumed_sigma_value}${
+                              ` (sigma ${formatScientific(weighting.assumed_sigma_value)}${
                                 weighting.assumed_sigma_unit ? ` ${weighting.assumed_sigma_unit}` : ""
                               })`}
                             {weighting.relative_output_weight !== "1" &&
-                              ` — relative weight ${weighting.relative_output_weight}`}
+                              ` — relative weight ${formatScientific(weighting.relative_output_weight)}`}
                           </li>
                         ))}
                       </ul>

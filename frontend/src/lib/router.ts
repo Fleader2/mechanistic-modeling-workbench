@@ -12,6 +12,7 @@ export type Route =
   | { screen: "project-detail"; projectId: string }
   | { screen: "study-detail"; projectId: string; studyId: string }
   | { screen: "model-detail"; projectId: string; studyId: string; modelId: string }
+  | { screen: "upload-antimony"; projectId: string; studyId: string }
   | { screen: "module-sets"; projectId: string; studyId: string }
   | { screen: "module-set-draft"; projectId: string; studyId: string; draftId: string }
   | {
@@ -43,6 +44,20 @@ export type Route =
       datasetId: string;
       modelId: string;
     }
+  | { screen: "initial-conditions-datasets"; projectId: string; studyId: string }
+  | {
+      screen: "initial-conditions-dataset-detail";
+      projectId: string;
+      studyId: string;
+      datasetId: string;
+    }
+  | {
+      screen: "initial-conditions-alias-mapping";
+      projectId: string;
+      studyId: string;
+      datasetId: string;
+      modelId: string;
+    }
   | { screen: "calibration-jobs"; projectId: string; studyId: string }
   | { screen: "calibration-job-detail"; projectId: string; studyId: string; jobId: string };
 
@@ -55,6 +70,12 @@ const TIME_SERIES_DATASET_DETAIL_PATH =
   /^\/projects\/([^/]+)\/studies\/([^/]+)\/datasets\/time-series\/([^/]+)\/?$/;
 const TIME_SERIES_DATASETS_PATH =
   /^\/projects\/([^/]+)\/studies\/([^/]+)\/datasets\/time-series\/?$/;
+const INITIAL_CONDITIONS_ALIAS_MAPPING_PATH =
+  /^\/projects\/([^/]+)\/studies\/([^/]+)\/datasets\/initial-conditions\/([^/]+)\/alias-mapping\/([^/]+)\/?$/;
+const INITIAL_CONDITIONS_DATASET_DETAIL_PATH =
+  /^\/projects\/([^/]+)\/studies\/([^/]+)\/datasets\/initial-conditions\/([^/]+)\/?$/;
+const INITIAL_CONDITIONS_DATASETS_PATH =
+  /^\/projects\/([^/]+)\/studies\/([^/]+)\/datasets\/initial-conditions\/?$/;
 const MODULE_SET_MEMBER_EXECUTION_PATH =
   /^\/projects\/([^/]+)\/studies\/([^/]+)\/module-sets\/([^/]+)\/versions\/([^/]+)\/members\/([^/]+)\/execution\/?$/;
 const MODULE_SET_VERSION_PATH =
@@ -63,6 +84,8 @@ const MODULE_SET_DRAFT_PATH =
   /^\/projects\/([^/]+)\/studies\/([^/]+)\/module-set-drafts\/([^/]+)\/?$/;
 const MODULE_SETS_PATH = /^\/projects\/([^/]+)\/studies\/([^/]+)\/module-sets\/?$/;
 const MODEL_DETAIL_PATH = /^\/projects\/([^/]+)\/studies\/([^/]+)\/models\/([^/]+)\/?$/;
+const UPLOAD_ANTIMONY_PATH =
+  /^\/projects\/([^/]+)\/studies\/([^/]+)\/upload-antimony\/?$/;
 const STUDY_DETAIL_PATH = /^\/projects\/([^/]+)\/studies\/([^/]+)\/?$/;
 const PROJECT_DETAIL_PATH = /^\/projects\/([^/]+)\/?$/;
 
@@ -116,6 +139,33 @@ export function parseRoute(pathname: string): Route {
       studyId: decodeURIComponent(datasetsMatch[2]),
     };
   }
+  const icAliasMappingMatch = INITIAL_CONDITIONS_ALIAS_MAPPING_PATH.exec(pathname);
+  if (icAliasMappingMatch) {
+    return {
+      screen: "initial-conditions-alias-mapping",
+      projectId: decodeURIComponent(icAliasMappingMatch[1]),
+      studyId: decodeURIComponent(icAliasMappingMatch[2]),
+      datasetId: decodeURIComponent(icAliasMappingMatch[3]),
+      modelId: decodeURIComponent(icAliasMappingMatch[4]),
+    };
+  }
+  const icDatasetDetailMatch = INITIAL_CONDITIONS_DATASET_DETAIL_PATH.exec(pathname);
+  if (icDatasetDetailMatch) {
+    return {
+      screen: "initial-conditions-dataset-detail",
+      projectId: decodeURIComponent(icDatasetDetailMatch[1]),
+      studyId: decodeURIComponent(icDatasetDetailMatch[2]),
+      datasetId: decodeURIComponent(icDatasetDetailMatch[3]),
+    };
+  }
+  const icDatasetsMatch = INITIAL_CONDITIONS_DATASETS_PATH.exec(pathname);
+  if (icDatasetsMatch) {
+    return {
+      screen: "initial-conditions-datasets",
+      projectId: decodeURIComponent(icDatasetsMatch[1]),
+      studyId: decodeURIComponent(icDatasetsMatch[2]),
+    };
+  }
   const executionMatch = MODULE_SET_MEMBER_EXECUTION_PATH.exec(pathname);
   if (executionMatch) {
     return {
@@ -161,6 +211,14 @@ export function parseRoute(pathname: string): Route {
       projectId: decodeURIComponent(modelMatch[1]),
       studyId: decodeURIComponent(modelMatch[2]),
       modelId: decodeURIComponent(modelMatch[3]),
+    };
+  }
+  const uploadAntimonyMatch = UPLOAD_ANTIMONY_PATH.exec(pathname);
+  if (uploadAntimonyMatch) {
+    return {
+      screen: "upload-antimony",
+      projectId: decodeURIComponent(uploadAntimonyMatch[1]),
+      studyId: decodeURIComponent(uploadAntimonyMatch[2]),
     };
   }
   const studyMatch = STUDY_DETAIL_PATH.exec(pathname);

@@ -10,7 +10,7 @@ import {
 import { createStaleGuard } from "../lib/staleGuard";
 import { navigate } from "../lib/router";
 import { distinctConditionIds } from "../lib/timeSeriesPlotData";
-import { NOT_CAPTURED } from "../format";
+import { NOT_CAPTURED, formatScientific, fullPrecisionTitle } from "../format";
 import { RouterLink } from "./RouterLink";
 import { TimeSeriesPlot } from "./TimeSeriesPlot";
 import type {
@@ -566,9 +566,13 @@ export function TimeSeriesDatasetDetailScreen({
                 <td className={row.technical_replicate ? undefined : "not-captured"}>
                   {row.technical_replicate ?? NOT_CAPTURED}
                 </td>
-                <td>
+                <td
+                  title={
+                    row.time_status === "MEASURED" ? fullPrecisionTitle(row.time_value) : undefined
+                  }
+                >
                   {row.time_status === "MEASURED"
-                    ? row.time_value
+                    ? formatScientific(row.time_value)
                     : `${row.time_raw ?? NOT_CAPTURED} (${row.time_status})`}
                 </td>
                 {content.measurement_columns
@@ -576,9 +580,16 @@ export function TimeSeriesDatasetDetailScreen({
                   .map((column) => {
                     const measurement = row.measurements[column.column_name];
                     return (
-                      <td key={column.column_name}>
+                      <td
+                        key={column.column_name}
+                        title={
+                          measurement.status === "MEASURED"
+                            ? fullPrecisionTitle(measurement.value)
+                            : undefined
+                        }
+                      >
                         {measurement.status === "MEASURED"
-                          ? measurement.value
+                          ? formatScientific(measurement.value)
                           : `${measurement.raw ?? NOT_CAPTURED} (${measurement.status})`}
                       </td>
                     );

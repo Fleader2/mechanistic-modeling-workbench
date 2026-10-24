@@ -47,6 +47,8 @@ from app.persistence.calibration import (
     remove_experiment_output_weighting,
     remove_parameter_role,
     remove_variable_binding,
+    set_experiment_initial_conditions_dataset,
+    set_experiment_initial_conditions_mapping,
     set_experiment_mapping,
     set_experiment_objective_weighting,
     set_experiment_output_weighting,
@@ -79,6 +81,8 @@ from app.schemas.calibration import (
     ExecutionCapabilityItem,
     FindingItem,
     ModelRelationshipItem,
+    SetExperimentInitialConditionsDatasetRequest,
+    SetExperimentInitialConditionsMappingRequest,
     SetExperimentMappingRequest,
     SetExperimentObjectiveWeightingRequest,
     SetExperimentOutputWeightingRequest,
@@ -391,6 +395,91 @@ def set_calibration_experiment_mapping(
     job = _require_job(session, subproject_id, job_id)
     try:
         set_experiment_mapping(
+            session,
+            job=job,
+            experiment_id=experiment_id,
+            alias_mapping_revision_number=body.alias_mapping_revision_number,
+            expected_edit_version=body.expected_edit_version,
+            updated_by=body.updated_by,
+        )
+    except CalibrationJobStaleEdit as exc:
+        raise _stale(exc) from exc
+    except ValueError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR, str(exc), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+        ) from exc
+    session.commit()
+    job = _require_job(session, subproject_id, job_id)
+    return CalibrationJobDetail.from_model(job, session=session)
+
+
+@router.patch(
+    "/{project_id}/subprojects/{subproject_id}/calibration-jobs/{job_id}/experiments"
+    "/{experiment_id}/initial-conditions-dataset",
+    response_model=CalibrationJobDetail,
+    summary="Pin (or clear) one experiment's own initial-conditions dataset",
+    description=(
+        "Initial-Conditions Dataset Import increment (docs/36). Entirely separate from this "
+        "experiment's own calibration-target dataset -- gives a "
+        "value_source=INITIAL_CONDITIONS_DATASET binding something real to read from, e.g. "
+        "one cell type's own protein/metabolite abundance profile. Re-pinning (or clearing) "
+        "always clears this experiment's own pinned mapping revision too."
+    ),
+)
+def set_calibration_experiment_initial_conditions_dataset(
+    project_id: UUID,
+    subproject_id: UUID,
+    job_id: UUID,
+    experiment_id: UUID,
+    body: SetExperimentInitialConditionsDatasetRequest,
+    session: SessionDep,
+) -> CalibrationJobDetail:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    job = _require_job(session, subproject_id, job_id)
+    try:
+        set_experiment_initial_conditions_dataset(
+            session,
+            job=job,
+            experiment_id=experiment_id,
+            initial_conditions_dataset_id=body.initial_conditions_dataset_id,
+            expected_edit_version=body.expected_edit_version,
+            updated_by=body.updated_by,
+        )
+    except CalibrationJobStaleEdit as exc:
+        raise _stale(exc) from exc
+    except ValueError as exc:
+        raise ApiError(
+            ErrorCode.NOT_FOUND, str(exc), status_code=status.HTTP_404_NOT_FOUND
+        ) from exc
+    session.commit()
+    job = _require_job(session, subproject_id, job_id)
+    return CalibrationJobDetail.from_model(job, session=session)
+
+
+@router.patch(
+    "/{project_id}/subprojects/{subproject_id}/calibration-jobs/{job_id}/experiments"
+    "/{experiment_id}/initial-conditions-mapping",
+    response_model=CalibrationJobDetail,
+    summary="Re-pin (or clear) one experiment's own initial-conditions alias-mapping revision",
+    description=(
+        "Mirrors the calibration-target mapping route exactly, one dataset type over "
+        "(docs/36) -- always an explicit scientist action."
+    ),
+)
+def set_calibration_experiment_initial_conditions_mapping(
+    project_id: UUID,
+    subproject_id: UUID,
+    job_id: UUID,
+    experiment_id: UUID,
+    body: SetExperimentInitialConditionsMappingRequest,
+    session: SessionDep,
+) -> CalibrationJobDetail:
+    _require_project(session, project_id)
+    _require_modeling_study(session, project_id, subproject_id)
+    job = _require_job(session, subproject_id, job_id)
+    try:
+        set_experiment_initial_conditions_mapping(
             session,
             job=job,
             experiment_id=experiment_id,

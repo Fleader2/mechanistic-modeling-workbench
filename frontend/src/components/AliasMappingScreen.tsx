@@ -11,7 +11,7 @@ import {
   saveAliasMapping,
 } from "../api/client";
 import { createStaleGuard } from "../lib/staleGuard";
-import { NOT_CAPTURED } from "../format";
+import { NOT_CAPTURED, formatScientific } from "../format";
 import { RouterLink } from "./RouterLink";
 import type {
   AliasMappingAssignmentStatus,
@@ -353,7 +353,9 @@ export function AliasMappingScreen({
                     <td className={column.unit ? undefined : "not-captured"}>
                       {column.unit ?? NOT_CAPTURED}
                     </td>
-                    <td>{column.sample_values.join(", ")}</td>
+                    <td title={`Full precision: ${column.sample_values.join(", ")}`}>
+                      {column.sample_values.map((v) => formatScientific(v)).join(", ")}
+                    </td>
                     <td>
                       <select
                         aria-label={`Decision for ${column.column_name}`}

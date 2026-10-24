@@ -102,6 +102,22 @@ test("a nested, unsupported path under a model falls back to the projects screen
   });
 });
 
+test("/projects/<id>/studies/<id2>/upload-antimony resolves to the upload-antimony screen", () => {
+  assert.deepEqual(parseRoute("/projects/abc-123/studies/xyz-789/upload-antimony"), {
+    screen: "upload-antimony",
+    projectId: "abc-123",
+    studyId: "xyz-789",
+  });
+});
+
+test("a trailing slash on an upload-antimony path is tolerated", () => {
+  assert.deepEqual(parseRoute("/projects/abc-123/studies/xyz-789/upload-antimony/"), {
+    screen: "upload-antimony",
+    projectId: "abc-123",
+    studyId: "xyz-789",
+  });
+});
+
 test("/projects/<id>/studies/<id2>/module-sets resolves to the module-sets list screen", () => {
   assert.deepEqual(parseRoute("/projects/abc-123/studies/xyz-789/module-sets"), {
     screen: "module-sets",
@@ -296,6 +312,94 @@ test("a dataset-model-alias-mapping path never matches the shorter time-series-d
     "/projects/abc-123/studies/xyz-789/datasets/time-series/ds-1/alias-mapping/mod-1",
   );
   assert.notEqual(route.screen, "time-series-dataset-detail");
+});
+
+test("/projects/<id>/studies/<id2>/datasets/initial-conditions resolves to the initial-conditions-datasets screen", () => {
+  assert.deepEqual(
+    parseRoute("/projects/abc-123/studies/xyz-789/datasets/initial-conditions"),
+    {
+      screen: "initial-conditions-datasets",
+      projectId: "abc-123",
+      studyId: "xyz-789",
+    },
+  );
+});
+
+test("a trailing slash on an initial-conditions-datasets path is tolerated", () => {
+  assert.deepEqual(
+    parseRoute("/projects/abc-123/studies/xyz-789/datasets/initial-conditions/"),
+    {
+      screen: "initial-conditions-datasets",
+      projectId: "abc-123",
+      studyId: "xyz-789",
+    },
+  );
+});
+
+test("/projects/<id>/studies/<id2>/datasets/initial-conditions/<id3> resolves to the initial-conditions-dataset-detail screen", () => {
+  assert.deepEqual(
+    parseRoute("/projects/abc-123/studies/xyz-789/datasets/initial-conditions/ds-1"),
+    {
+      screen: "initial-conditions-dataset-detail",
+      projectId: "abc-123",
+      studyId: "xyz-789",
+      datasetId: "ds-1",
+    },
+  );
+});
+
+test("URL-encoded ids in an initial-conditions-dataset-detail path are all decoded", () => {
+  assert.deepEqual(
+    parseRoute("/projects/abc%20123/studies/xyz%20789/datasets/initial-conditions/ds%201"),
+    {
+      screen: "initial-conditions-dataset-detail",
+      projectId: "abc 123",
+      studyId: "xyz 789",
+      datasetId: "ds 1",
+    },
+  );
+});
+
+test("/projects/<id>/studies/<id2>/datasets/initial-conditions/<id3>/alias-mapping/<id4> resolves to the initial-conditions-alias-mapping screen", () => {
+  assert.deepEqual(
+    parseRoute(
+      "/projects/abc-123/studies/xyz-789/datasets/initial-conditions/ds-1/alias-mapping/mod-1",
+    ),
+    {
+      screen: "initial-conditions-alias-mapping",
+      projectId: "abc-123",
+      studyId: "xyz-789",
+      datasetId: "ds-1",
+      modelId: "mod-1",
+    },
+  );
+});
+
+test("a trailing slash on an initial-conditions-alias-mapping path is tolerated", () => {
+  assert.deepEqual(
+    parseRoute(
+      "/projects/abc-123/studies/xyz-789/datasets/initial-conditions/ds-1/alias-mapping/mod-1/",
+    ),
+    {
+      screen: "initial-conditions-alias-mapping",
+      projectId: "abc-123",
+      studyId: "xyz-789",
+      datasetId: "ds-1",
+      modelId: "mod-1",
+    },
+  );
+});
+
+test("an initial-conditions-alias-mapping path never matches the shorter initial-conditions-dataset-detail route", () => {
+  const route = parseRoute(
+    "/projects/abc-123/studies/xyz-789/datasets/initial-conditions/ds-1/alias-mapping/mod-1",
+  );
+  assert.notEqual(route.screen, "initial-conditions-dataset-detail");
+});
+
+test("an initial-conditions-datasets path never matches the time-series-datasets route", () => {
+  const route = parseRoute("/projects/abc-123/studies/xyz-789/datasets/initial-conditions");
+  assert.notEqual(route.screen, "time-series-datasets");
 });
 
 test("/projects/<id>/studies/<id>/calibration-jobs resolves to the calibration-jobs screen", () => {

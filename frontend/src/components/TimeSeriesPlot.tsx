@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { TimeSeriesDataRowItem, TimeSeriesMeasurementColumnItem } from "../types";
+import { formatScientific, fullPrecisionValue } from "../format";
 import {
   computeAxisDomain,
   groupIntoSeries,
@@ -133,7 +134,8 @@ export function TimeSeriesPlot({
           className="time-series-plot-axis"
         />
         <text x={MARGIN.left} y={HEIGHT - 6} className="time-series-plot-axis-label">
-          {xDomain.min.toFixed(1)}
+          <title>{fullPrecisionValue(xDomain.min)}</title>
+          {formatScientific(xDomain.min)}
         </text>
         <text
           x={WIDTH - MARGIN.right}
@@ -141,13 +143,16 @@ export function TimeSeriesPlot({
           textAnchor="end"
           className="time-series-plot-axis-label"
         >
-          {xDomain.max.toFixed(1)} (time)
+          <title>{fullPrecisionValue(xDomain.max)}</title>
+          {formatScientific(xDomain.max)} (time)
         </text>
         <text x={4} y={MARGIN.top + 8} className="time-series-plot-axis-label">
-          {yDomain.max.toFixed(2)}
+          <title>{fullPrecisionValue(yDomain.max)}</title>
+          {formatScientific(yDomain.max)}
         </text>
         <text x={4} y={HEIGHT - MARGIN.bottom} className="time-series-plot-axis-label">
-          {yDomain.min.toFixed(2)}
+          <title>{fullPrecisionValue(yDomain.min)}</title>
+          {formatScientific(yDomain.min)}
         </text>
 
         {perColumn.map(({ column, series }, colorIndex) => {
@@ -198,8 +203,9 @@ export function TimeSeriesPlot({
                       onBlur={() => setTooltip(null)}
                     >
                       <title>
-                        {column.column_name} = {point.value} ({column.unit ?? "unit not declared"}) at time{" "}
-                        {point.time}
+                        {column.column_name} = {fullPrecisionValue(point.value)} (
+                        {column.unit ?? "unit not declared"}) at time{" "}
+                        {fullPrecisionValue(point.time)}
                         {point.sampleId ? `, sample ${point.sampleId}` : ", no sample id recorded"}
                         {point.conditionId ? `, condition ${point.conditionId}` : ""}
                         {" -- row "}
@@ -220,10 +226,10 @@ export function TimeSeriesPlot({
           style={{ left: `${(tooltip.x / WIDTH) * 100}%`, top: `${(tooltip.y / HEIGHT) * 100}%` }}
           role="status"
         >
-          <strong>{tooltip.columnName}</strong> = {tooltip.point.value}
+          <strong>{tooltip.columnName}</strong> = {fullPrecisionValue(tooltip.point.value)}
           {tooltip.unit ? ` ${tooltip.unit}` : " (unit not declared)"}
           <br />
-          time = {tooltip.point.time}
+          time = {fullPrecisionValue(tooltip.point.time)}
           <br />
           sample: {tooltip.point.sampleId ?? "not recorded"}
           <br />

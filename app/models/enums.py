@@ -508,6 +508,20 @@ class AliasMappingUnitFinding(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class InitialConditionsAliasMappingTargetKind(StrEnum):
+    """Which real, verified catalog one ``InitialConditionsAliasMappingAssignment``'s own
+    ``target_id`` was actually resolved against -- Initial-Conditions Dataset Import increment
+    (``docs/36``). Unlike the time-series alias mapping (``docs/27``, species only), a row of
+    this dataset's own ``target_name`` may resolve to either a species or an independent
+    parameter -- this field is never left implicit, so a consumer never needs to guess which
+    catalog a given ``target_id`` string actually came from, and a name that happens to collide
+    between the two catalogs is never silently resolved one way (``app.persistence
+    .initial_conditions_alias_mapping`` raises instead; see that module's own docstring)."""
+
+    SPECIES = "SPECIES"
+    PARAMETER = "PARAMETER"
+
+
 class ModuleSetOriginMethod(StrEnum):
     """How one ``ModuleSetVersion`` (or, while open, ``ModuleSetDraft``) came to have its own
     content (Module-Set Domain Model increment, ``docs/20_module_set_domain_contract.md``).
@@ -639,10 +653,18 @@ class CalibrationBindingValueSource(StrEnum):
     (e.g. a dose that varies by sample), read from the dataset's own original data at
     execution time, never copied/duplicated into this row (task instructions: "preserve
     original data and units; do not silently convert values").
+    ``INITIAL_CONDITIONS_DATASET`` -- Initial-Conditions Dataset Import increment (``docs/36``):
+    the experiment's own pinned ``InitialConditionsDataset`` (a completely separate dataset
+    from ``DATASET_COLUMN``'s own time-series dataset), read via that dataset's own alias
+    mapping at execution time -- never hand-typed, identical "preserve original data" discipline
+    as ``DATASET_COLUMN``. ``source_column_name`` names which of that dataset's own declared
+    measurement columns to read (e.g. "Abundance") -- the same field ``DATASET_COLUMN`` already
+    uses for its own column name, repurposed rather than duplicated.
     """
 
     CONSTANT = "CONSTANT"
     DATASET_COLUMN = "DATASET_COLUMN"
+    INITIAL_CONDITIONS_DATASET = "INITIAL_CONDITIONS_DATASET"
 
 
 class CalibrationUncertaintySource(StrEnum):
@@ -827,6 +849,7 @@ __all__ = [
     "DiagnosticSeverity",
     "HierarchyResumeAttemptStatus",
     "HierarchyReviewDecisionValue",
+    "InitialConditionsAliasMappingTargetKind",
     "MeasurementValueStatus",
     "ModelBuildRequestGeneProteinRole",
     "ModelBuildRequestPathwayRole",

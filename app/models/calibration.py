@@ -58,6 +58,8 @@ from app.models.enums import (
     CalibrationUncertaintySource,
     UncertaintyStatisticKind,
 )
+from app.models.initial_conditions_alias_mapping import InitialConditionsAliasMappingRevision
+from app.models.initial_conditions_dataset import InitialConditionsDataset
 from app.models.model import Model
 from app.models.subproject import Subproject
 from app.models.time_series_dataset import TimeSeriesDataset
@@ -210,6 +212,28 @@ class CalibrationExperiment(Base):
         index=True,
     )
 
+    #: Initial-Conditions Dataset Import increment (``docs/36``): this experiment's own
+    #: optionally-pinned initial-conditions dataset -- e.g. one cell type's own protein/
+    #: metabolite abundance profile, giving a ``value_source=INITIAL_CONDITIONS_DATASET``
+    #: binding something real to read from. Entirely separate from ``time_series_dataset_id``
+    #: (the calibration *target* data): the same model can be evaluated against different cell
+    #: types by pinning a different ``InitialConditionsDataset`` here per experiment, while the
+    #: calibration-target dataset above stays whatever it already was. ``NULL`` by default --
+    #: never required, since a model's own Antimony source may already declare adequate initial
+    #: values.
+    initial_conditions_dataset_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("initial_conditions_dataset.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    #: The specific, immutable alias-mapping revision (of the dataset above) this experiment is
+    #: pinned to -- mirrors ``alias_mapping_revision_id`` exactly, one level down.
+    initial_conditions_alias_mapping_revision_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("initial_conditions_alias_mapping_revision.id", ondelete="RESTRICT"),
+        index=True,
+    )
+
     role: Mapped[CalibrationExperimentRole] = mapped_column(
         _CALIBRATION_EXPERIMENT_ROLE,
         nullable=False,
@@ -234,6 +258,10 @@ class CalibrationExperiment(Base):
     arm: Mapped[CalibrationArm] = relationship(back_populates="experiments")
     time_series_dataset: Mapped[TimeSeriesDataset] = relationship()
     alias_mapping_revision: Mapped[DatasetModelAliasMappingRevision | None] = relationship()
+    initial_conditions_dataset: Mapped[InitialConditionsDataset | None] = relationship()
+    initial_conditions_alias_mapping_revision: Mapped[
+        InitialConditionsAliasMappingRevision | None
+    ] = relationship()
     variable_bindings: Mapped[list[CalibrationExperimentVariableBinding]] = relationship(
         back_populates="experiment", cascade="all, delete-orphan", passive_deletes=True
     )
@@ -290,9 +318,12 @@ class CalibrationExperimentVariableBinding(Base):
     #: Set only when ``value_source=CONSTANT``.
     constant_value: Mapped[Decimal | None] = mapped_column(Numeric)
     constant_unit: Mapped[str | None] = mapped_column(String)
-    #: Set only when ``value_source=DATASET_COLUMN`` -- a real
+    #: Set when ``value_source=DATASET_COLUMN`` (a real
     #: ``TimeSeriesIndependentVariableColumn.column_name`` of the experiment's own pinned
-    #: dataset, validated server-side (module docstring).
+    #: time-series dataset) or ``value_source=INITIAL_CONDITIONS_DATASET`` (a real
+    #: ``InitialConditionsMeasurementColumn.column_name`` of the experiment's own pinned
+    #: initial-conditions dataset, docs/36) -- validated server-side against whichever dataset
+    #: is relevant to the chosen ``value_source``.
     source_column_name: Mapped[str | None] = mapped_column(Text)
     #: e.g. "condition_legend" (derived from the dataset's own recorded condition) or "manual"
     #: (typed directly) -- disclosure of provenance, never interpreted.

@@ -31,6 +31,21 @@ column that genuinely varies row-to-row within that scope is a dosing *schedule*
 silently reduced to a single scalar override (task instructions: "never treat successive dose
 rows as a dosing schedule without explicit instructions") -- rejected with an actionable error
 naming every distinct value found.
+
+**Initial-conditions discipline (Initial-Conditions Dataset Import increment, docs/36)**: an
+``INITIAL_CONDITIONS_DATASET``-sourced binding's own value is resolved from this experiment's
+own pinned ``InitialConditionsDataset``, via its own pinned alias-mapping revision -- never
+hand-typed. The identical never-silently-reduced discipline applies to a duplicate
+``target_name`` (``app.initial_conditions.parser``'s own disclosed, non-blocking finding): if
+the dataset's own duplicate rows for the one target_name a binding resolves to actually
+disagree, this is rejected with an actionable error naming every distinct value found, exactly
+like a varying dosing-schedule column. An abundance measurement is never automatically treated
+as a model concentration or parameter value: if the mapping's own ``unit_finding`` (computed
+once, at mapping-save time, from ``compare_units``) is ``INCOMPATIBLE``, resolution is rejected
+outright rather than silently handing an incompatible-unit number to the harness -- the one
+place this check previously stopped short of actually reaching. ``UNKNOWN`` (either side's own
+unit undeclared) is never treated as equivalent to a known-safe unit, but is also never
+blocking on its own -- "cannot tell" is not the same claim as "confirmed incompatible."
 """
 
 from __future__ import annotations
@@ -49,15 +64,20 @@ from app.models.calibration import CalibrationExperiment, CalibrationJob, Calibr
 from app.models.calibration_scenario_evaluation import CalibrationScenarioEvaluationSnapshot
 from app.models.enums import (
     AliasMappingAssignmentStatus,
+    AliasMappingUnitFinding,
     ModelParameterCatalogStatus,
     ModelParameterKind,
     ModelSpeciesCatalogStatus,
     RunStage,
     RunStatus,
 )
+from app.models.initial_conditions_dataset import InitialConditionsDatasetRow
 from app.models.run_record import RunRecord
 from app.models.time_series_dataset import TimeSeriesDatasetRow, TimeSeriesMeasurementColumn
 from app.persistence.dataset_model_alias_mapping import get_mapping_revision
+from app.persistence.initial_conditions_alias_mapping import (
+    get_mapping_revision as get_ic_mapping_revision,
+)
 from app.persistence.model_parameter_catalog import get_model_parameter_catalog
 from app.persistence.model_species_catalog import get_model_species_catalog
 from app.persistence.run_record import create_run_record
@@ -192,6 +212,89 @@ def _resolve_dataset_column_value(
     return Decimal(str(next(iter(distinct_values.values()))))
 
 
+def _resolve_initial_conditions_dataset_value(
+    session: Session,
+    *,
+    initial_conditions_dataset_id: UUID,
+    alias_mapping_revision_number: int | None,
+    model_id: UUID,
+    target_component_id: str,
+    column_name: str,
+    binding_label: str,
+) -> Decimal:
+    """The one value an ``INITIAL_CONDITIONS_DATASET`` binding resolves to -- see module
+    docstring's "initial-conditions discipline" for the duplicate-target_name rejection this
+    mirrors from ``_resolve_dataset_column_value``, and for the unit-compatibility rejection
+    carried forward from the mapping's own ``unit_finding`` (computed once, at mapping-save
+    time, by ``app.persistence.initial_conditions_alias_mapping``)."""
+    if alias_mapping_revision_number is None:
+        raise ScenarioResolutionError(
+            f"{binding_label} reads from this experiment's own pinned initial-conditions "
+            "dataset, but no alias-mapping revision is pinned for it"
+        )
+    revision = get_ic_mapping_revision(
+        session,
+        initial_conditions_dataset_id=initial_conditions_dataset_id,
+        model_id=model_id,
+        revision_number=alias_mapping_revision_number,
+    )
+    if revision is None:
+        raise ScenarioResolutionError(
+            f"{binding_label} reads from initial-conditions alias-mapping revision "
+            f"{alias_mapping_revision_number}, which no longer exists"
+        )
+    assignment = next(
+        (
+            a
+            for a in revision.assignments
+            if a.status is AliasMappingAssignmentStatus.ASSIGNED
+            and a.target_id == target_component_id
+        ),
+        None,
+    )
+    if assignment is None:
+        raise ScenarioResolutionError(
+            f"{binding_label} has no row in this experiment's own pinned initial-conditions "
+            f"dataset mapped to {target_component_id!r}"
+        )
+    if assignment.unit_finding is AliasMappingUnitFinding.INCOMPATIBLE:
+        raise ScenarioResolutionError(
+            f"{binding_label} reads target_name {assignment.target_name!r}, whose own "
+            f"declared unit was found INCOMPATIBLE with {target_component_id!r}'s own unit at "
+            "mapping time -- an abundance measurement is never silently treated as if it were "
+            "in the model's own unit; re-map this target with a compatible unit, or correct "
+            "the dataset's own declared unit, before evaluating"
+        )
+
+    rows = session.scalars(
+        select(InitialConditionsDatasetRow).where(
+            InitialConditionsDatasetRow.initial_conditions_dataset_id
+            == initial_conditions_dataset_id,
+            InitialConditionsDatasetRow.target_name == assignment.target_name,
+        )
+    ).all()
+    distinct_values: dict[str, float] = {}
+    for row in rows:
+        entry = json.loads(row.measurements).get(column_name)
+        if entry is None or entry.get("value") is None:
+            continue
+        distinct_values[str(entry["value"])] = entry["value"]
+    if not distinct_values:
+        raise ScenarioResolutionError(
+            f"{binding_label} reads measurement column {column_name!r} of target_name "
+            f"{assignment.target_name!r}, which has no recorded value in the pinned "
+            "initial-conditions dataset"
+        )
+    if len(distinct_values) > 1:
+        raise ScenarioResolutionError(
+            f"{binding_label} reads measurement column {column_name!r} of target_name "
+            f"{assignment.target_name!r}, which has {sorted(distinct_values.values())!r} -- "
+            "distinct values across duplicate rows for the identical target_name, never "
+            "silently reduced to one; resolve the duplicate in the dataset first"
+        )
+    return Decimal(str(next(iter(distinct_values.values()))))
+
+
 def resolve_scenario(
     session: Session,
     *,
@@ -251,9 +354,31 @@ def resolve_scenario(
 
         if binding["value_source"] == "CONSTANT":
             value = Decimal(binding["constant_value"])
-        else:
+        elif binding["value_source"] == "DATASET_COLUMN":
             value = _resolve_dataset_column_value(
                 rows, column_name=binding["source_column_name"], binding_label=label
+            )
+        elif binding["value_source"] == "INITIAL_CONDITIONS_DATASET":
+            ic_dataset_id = experiment.get("initial_conditions_dataset_id")
+            if ic_dataset_id is None:
+                raise ScenarioResolutionError(
+                    f"{label} reads from this experiment's own pinned initial-conditions "
+                    "dataset, but this experiment has none pinned"
+                )
+            value = _resolve_initial_conditions_dataset_value(
+                session,
+                initial_conditions_dataset_id=UUID(ic_dataset_id),
+                alias_mapping_revision_number=experiment.get(
+                    "initial_conditions_alias_mapping_revision_number"
+                ),
+                model_id=model_id,
+                target_component_id=target_id,
+                column_name=binding["source_column_name"],
+                binding_label=label,
+            )
+        else:
+            raise ScenarioResolutionError(
+                f"unrecognized value_source {binding['value_source']!r}"
             )
 
         if model_meaning == "INITIAL_VALUE":

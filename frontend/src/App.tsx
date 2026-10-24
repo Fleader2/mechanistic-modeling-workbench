@@ -5,6 +5,7 @@ import { ProjectsListScreen } from "./components/ProjectsListScreen";
 import { ProjectDetailScreen } from "./components/ProjectDetailScreen";
 import { StudyDetailScreen } from "./components/StudyDetailScreen";
 import { ModelOverviewScreen } from "./components/ModelOverviewScreen";
+import { UploadAntimonyScreen } from "./components/UploadAntimonyScreen";
 import { ModuleSetsListScreen } from "./components/ModuleSetsListScreen";
 import { ModuleSetDraftScreen } from "./components/ModuleSetDraftScreen";
 import { ModuleSetVersionScreen } from "./components/ModuleSetVersionScreen";
@@ -12,6 +13,9 @@ import { ModuleSetMemberExecutionScreen } from "./components/ModuleSetMemberExec
 import { TimeSeriesDatasetsListScreen } from "./components/TimeSeriesDatasetsListScreen";
 import { TimeSeriesDatasetDetailScreen } from "./components/TimeSeriesDatasetDetailScreen";
 import { AliasMappingScreen } from "./components/AliasMappingScreen";
+import { InitialConditionsDatasetsListScreen } from "./components/InitialConditionsDatasetsListScreen";
+import { InitialConditionsDatasetDetailScreen } from "./components/InitialConditionsDatasetDetailScreen";
+import { InitialConditionsAliasMappingScreen } from "./components/InitialConditionsAliasMappingScreen";
 import { CalibrationJobsListScreen } from "./components/CalibrationJobsListScreen";
 import { CalibrationJobScreen } from "./components/CalibrationJobScreen";
 import { Sidebar } from "./components/Sidebar";
@@ -38,6 +42,7 @@ export function App() {
     "project-detail",
     "study-detail",
     "model-detail",
+    "upload-antimony",
     "module-sets",
     "module-set-draft",
     "module-set-version",
@@ -45,6 +50,9 @@ export function App() {
     "time-series-datasets",
     "time-series-dataset-detail",
     "dataset-model-alias-mapping",
+    "initial-conditions-datasets",
+    "initial-conditions-dataset-detail",
+    "initial-conditions-alias-mapping",
     "calibration-jobs",
     "calibration-job-detail",
   ];
@@ -81,6 +89,14 @@ export function App() {
               projectId={route.projectId}
               studyId={route.studyId}
               modelId={route.modelId}
+              onProjectChange={handleProjectChange}
+              onStudyChange={handleStudyChange}
+            />
+          )}
+          {route.screen === "upload-antimony" && (
+            <UploadAntimonyScreen
+              projectId={route.projectId}
+              studyId={route.studyId}
               onProjectChange={handleProjectChange}
               onStudyChange={handleStudyChange}
             />
@@ -142,6 +158,33 @@ export function App() {
           )}
           {route.screen === "dataset-model-alias-mapping" && (
             <AliasMappingScreen
+              projectId={route.projectId}
+              studyId={route.studyId}
+              datasetId={route.datasetId}
+              modelId={route.modelId}
+              onProjectChange={handleProjectChange}
+              onStudyChange={handleStudyChange}
+            />
+          )}
+          {route.screen === "initial-conditions-datasets" && (
+            <InitialConditionsDatasetsListScreen
+              projectId={route.projectId}
+              studyId={route.studyId}
+              onProjectChange={handleProjectChange}
+              onStudyChange={handleStudyChange}
+            />
+          )}
+          {route.screen === "initial-conditions-dataset-detail" && (
+            <InitialConditionsDatasetDetailScreen
+              projectId={route.projectId}
+              studyId={route.studyId}
+              datasetId={route.datasetId}
+              onProjectChange={handleProjectChange}
+              onStudyChange={handleStudyChange}
+            />
+          )}
+          {route.screen === "initial-conditions-alias-mapping" && (
+            <InitialConditionsAliasMappingScreen
               projectId={route.projectId}
               studyId={route.studyId}
               datasetId={route.datasetId}

@@ -120,6 +120,49 @@ export interface ModelLineage {
   children_out_of_scope_count: number;
 }
 
+// Whole-Model Antimony Import increment (docs/34). Mirrors
+// app/schemas/model_antimony_import.py. Preview never persists anything; save re-verifies
+// the uploaded text itself, never trusting a client-side echo of an earlier preview.
+
+export interface AntimonyImportPreviewResponse {
+  load_succeeded: boolean;
+  load_message: string | null;
+  floating_species_ids: string[];
+  boundary_species_ids: string[];
+  compartment_ids: string[];
+  global_parameter_ids: string[];
+  assignment_rule_derived_parameter_ids: string[];
+  import_succeeded: boolean;
+  import_error_kind: string | null;
+  import_message: string | null;
+  assignment_rule_count: number;
+  rate_rule_count: number;
+  algebraic_rule_count: number;
+  event_count: number;
+}
+
+export interface ModelImportProvenanceItem {
+  id: string;
+  original_filename: string;
+  original_checksum: string;
+  source_reference: string | null;
+  verification_notes: string | null;
+  import_succeeded: boolean;
+  import_error_kind: string | null;
+  import_message: string | null;
+  assignment_rule_count: number;
+  rate_rule_count: number;
+  algebraic_rule_count: number;
+  event_count: number;
+  antimony_import_parser_version: string | null;
+  created_at: string;
+  created_by: string | null;
+}
+
+export interface AntimonySourceResponse {
+  antimony_text: string;
+}
+
 // --- Module sets (docs/20_module_set_domain_contract.md, docs/21_module_set_first_increment.md) ---
 
 export type ModuleSetOriginMethod = "AUTOMATED" | "MANUAL" | "MIXED_EDITED";
@@ -509,6 +552,140 @@ export interface SaveAliasMappingRequest {
   saved_by?: string | null;
 }
 
+// Mirrors app/schemas/initial_conditions_dataset.py (Initial-Conditions Dataset Import
+// increment). Long-format: one row per target (e.g. one protein or metabolite), no time/
+// condition/independent-variable axis -- see docs/36.
+
+export interface InitialConditionsFindingItem {
+  code: string;
+  severity: string;
+  message: string;
+  field: string | null;
+  column_name: string | null;
+  row_index: number | null;
+}
+
+export interface InitialConditionsMeasurementColumnItem {
+  column_name: string;
+  display_order: number;
+  unit: string | null;
+  description: string | null;
+  declared_in_metadata: boolean;
+}
+
+export interface InitialConditionsMeasurementValueItem {
+  status: MeasurementValueStatus;
+  value: number | null;
+  raw: string | null;
+}
+
+export interface InitialConditionsDataRowItem {
+  row_index: number;
+  target_name: string | null;
+  measurements: Record<string, InitialConditionsMeasurementValueItem>;
+}
+
+export interface InitialConditionsWorkbookPreview {
+  original_filename: string;
+  effective_dataset_name: string;
+  metadata: Record<string, string | null>;
+  measurement_columns: InitialConditionsMeasurementColumnItem[];
+  rows: InitialConditionsDataRowItem[];
+  findings: InitialConditionsFindingItem[];
+}
+
+export interface InitialConditionsDatasetDetail {
+  id: string;
+  dataset_reference_id: string;
+  saved_by: string | null;
+  created_at: string;
+  content: InitialConditionsWorkbookPreview;
+}
+
+export interface InitialConditionsDatasetListItem {
+  id: string;
+  name: string;
+  cell_type: string | null;
+  organism: string | null;
+  row_count: number;
+  measurement_column_count: number;
+  unresolved_finding_count: number;
+  saved_by: string | null;
+  created_at: string;
+}
+
+// Mirrors app/schemas/initial_conditions_alias_mapping.py -- maps each distinct target_name
+// (a row value, never a column header) to a real species or independent parameter.
+
+export type InitialConditionsAliasMappingTargetKind = "SPECIES" | "PARAMETER";
+export type ModelParameterCatalogStatus = "AVAILABLE" | "UNAVAILABLE";
+
+export interface InitialConditionsAliasMappingSpeciesOption {
+  antimony_species_id: string;
+  display_name: string | null;
+  compartment_id: string;
+  compartment_name: string | null;
+}
+
+export interface InitialConditionsAliasMappingParameterOption {
+  antimony_parameter_id: string;
+  display_name: string | null;
+  unit: string | null;
+}
+
+export interface InitialConditionsAliasMappingTargetInfo {
+  target_name: string;
+  unit: string | null;
+  sample_values: string[];
+}
+
+export interface InitialConditionsAliasMappingAssignmentItem {
+  target_name: string;
+  status: AliasMappingAssignmentStatus;
+  target_kind: InitialConditionsAliasMappingTargetKind | null;
+  target_id: string | null;
+  unit_finding: AliasMappingUnitFinding | null;
+  unit_comparison_detail: Record<string, unknown> | null;
+}
+
+export interface InitialConditionsAliasMappingRevisionSummary {
+  revision_number: number;
+  saved_by: string | null;
+  created_at: string;
+  assigned_count: number;
+  skipped_count: number;
+  unresolved_count: number;
+}
+
+export interface InitialConditionsAliasMappingDetail {
+  initial_conditions_dataset_id: string;
+  model_id: string;
+  model_species_catalog_status: ModelSpeciesCatalogStatus | null;
+  model_species_catalog_unavailable_reason: string | null;
+  model_parameter_catalog_status: ModelParameterCatalogStatus | null;
+  model_parameter_catalog_unavailable_reason: string | null;
+  available_species: InitialConditionsAliasMappingSpeciesOption[];
+  available_parameters: InitialConditionsAliasMappingParameterOption[];
+  targets: InitialConditionsAliasMappingTargetInfo[];
+  revision_number: number;
+  saved_by: string | null;
+  created_at: string | null;
+  assignments: InitialConditionsAliasMappingAssignmentItem[];
+}
+
+export interface SaveInitialConditionsAliasMappingAssignmentRequest {
+  target_name: string;
+  status: AliasMappingAssignmentStatus;
+  target_kind?: InitialConditionsAliasMappingTargetKind | null;
+  target_id?: string | null;
+}
+
+export interface SaveInitialConditionsAliasMappingRequest {
+  expected_revision_number: number;
+  assignments: SaveInitialConditionsAliasMappingAssignmentRequest[];
+  saved_by?: string | null;
+}
+
 // Mirrors app/schemas/calibration.py (Joint Calibration Workflow, configuration-only
 // increment, plus the docs/31 configuration-prerequisites revision on top of it). See
 // docs/29_joint_calibration_workflow_design.md, docs/30_joint_calibration_configuration
@@ -523,7 +700,10 @@ export type CalibrationBindingModelMeaning =
   | "INITIAL_VALUE"
   | "PARAMETER_OVERRIDE"
   | "INTERVENTION";
-export type CalibrationBindingValueSource = "CONSTANT" | "DATASET_COLUMN";
+export type CalibrationBindingValueSource =
+  | "CONSTANT"
+  | "DATASET_COLUMN"
+  | "INITIAL_CONDITIONS_DATASET";
 export type CalibrationUncertaintySource = "MEASURED" | "USER_ASSUMED" | "UNKNOWN";
 // A standard deviation, a variance, and a standard error are not interchangeable (docs/32) --
 // required wherever a real uncertainty value is captured.
@@ -602,6 +782,18 @@ export interface CalibrationExperimentItem {
   // measurement-uncertainty column -- i.e. where uncertainty_source=MEASURED is legal.
   outputs_with_measured_uncertainty: string[];
   output_weightings: OutputWeightingItem[];
+  // Initial-Conditions Dataset Import increment (docs/36): this experiment's own optionally-
+  // pinned initial-conditions dataset -- entirely separate from time_series_dataset_id (the
+  // calibration *target* data). null unless a scientist has pinned one.
+  initial_conditions_dataset_id: string | null;
+  initial_conditions_dataset_name: string | null;
+  initial_conditions_alias_mapping_revision_id: string | null;
+  initial_conditions_alias_mapping_revision_number: number | null;
+  initial_conditions_mapping_is_stale: boolean;
+  // Every measurement column of this experiment's own pinned initial-conditions dataset --
+  // what a value_source=INITIAL_CONDITIONS_DATASET binding may legally name
+  // (source_column_name). Empty if no initial-conditions dataset is pinned.
+  available_initial_conditions_columns: string[];
 }
 
 export interface CalibrationArmItem {
@@ -732,6 +924,18 @@ export interface AddExperimentRequest {
 }
 
 export interface SetExperimentMappingRequest {
+  alias_mapping_revision_number: number | null;
+  expected_edit_version: number;
+  updated_by?: string | null;
+}
+
+export interface SetExperimentInitialConditionsDatasetRequest {
+  initial_conditions_dataset_id: string | null;
+  expected_edit_version: number;
+  updated_by?: string | null;
+}
+
+export interface SetExperimentInitialConditionsMappingRequest {
   alias_mapping_revision_number: number | null;
   expected_edit_version: number;
   updated_by?: string | null;

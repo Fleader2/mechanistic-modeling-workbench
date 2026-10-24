@@ -5,6 +5,8 @@ import {
   formatBoundaryTreatmentType,
   formatExecutionStatus,
   formatPortDirection,
+  formatScientific,
+  fullPrecisionTitle,
   NOT_CAPTURED,
 } from "../format";
 import { ApiRequestError } from "../api/client";
@@ -251,8 +253,15 @@ export function ModuleHierarchyTable({
                               <td>{formatPortDirection(port.direction)}</td>
                               <td>{formatBoundaryTreatmentType(port.treatment_type)}</td>
                               <td>{formatBoundaryResolutionStatus(port.resolution_status)}</td>
-                              <td className={port.initial_value ? undefined : "not-captured"}>
-                                {port.initial_value ?? NOT_CAPTURED}
+                              <td
+                                className={port.initial_value ? undefined : "not-captured"}
+                                title={
+                                  port.initial_value
+                                    ? fullPrecisionTitle(port.initial_value)
+                                    : undefined
+                                }
+                              >
+                                {port.initial_value ? formatScientific(port.initial_value) : NOT_CAPTURED}
                                 {port.initial_value && port.unit ? ` ${port.unit}` : ""}
                               </td>
                               <td className={port.decided_by ? undefined : "not-captured"}>

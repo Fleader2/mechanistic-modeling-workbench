@@ -1,5 +1,7 @@
 import type {
   AddArmRequest,
+  AntimonyImportPreviewResponse,
+  AntimonySourceResponse,
   AddExperimentRequest,
   AddParameterRoleRequest,
   AddVariableBindingRequest,
@@ -15,7 +17,13 @@ import type {
   DeclareModelRelationshipRequest,
   EditModuleSetDraftMemberRequest,
   HierarchicalRunSummary,
+  InitialConditionsAliasMappingDetail,
+  InitialConditionsAliasMappingRevisionSummary,
+  InitialConditionsDatasetDetail,
+  InitialConditionsDatasetListItem,
+  InitialConditionsWorkbookPreview,
   ModelDetail,
+  ModelImportProvenanceItem,
   ModelLineage,
   ModelListItem,
   ModelRelationshipItem,
@@ -29,8 +37,11 @@ import type {
   ProjectDetail,
   ProjectListItem,
   SaveAliasMappingRequest,
+  SaveInitialConditionsAliasMappingRequest,
   SaveModuleSetDraftRequest,
   ScenarioEvaluationRunItem,
+  SetExperimentInitialConditionsDatasetRequest,
+  SetExperimentInitialConditionsMappingRequest,
   SetExperimentMappingRequest,
   SetExperimentObjectiveWeightingRequest,
   SetExperimentOutputWeightingRequest,
@@ -197,6 +208,66 @@ export function getModelLineage(
   modelId: string,
 ): Promise<ModelLineage> {
   return request<ModelLineage>(`${modelPath(projectId, studyId, modelId)}/lineage`);
+}
+
+// Whole-Model Antimony Import increment (docs/34). Mirrors
+// app/api/v1/routes/model_antimony_import.py.
+
+function modelsPath(projectId: string, studyId: string): string {
+  return `/api/v1/projects/${encodeURIComponent(projectId)}/subprojects/${encodeURIComponent(
+    studyId,
+  )}/models`;
+}
+
+export function previewModelAntimonyImport(
+  projectId: string,
+  studyId: string,
+  file: File,
+): Promise<AntimonyImportPreviewResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return requestFormData<AntimonyImportPreviewResponse>(
+    `${modelsPath(projectId, studyId)}/antimony-import/preview`,
+    formData,
+  );
+}
+
+export function saveModelAntimonyImport(
+  projectId: string,
+  studyId: string,
+  file: File,
+  name: string,
+  sourceReference?: string,
+  verificationNotes?: string,
+  createdBy?: string,
+): Promise<ModelDetail> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("name", name);
+  if (sourceReference) formData.append("source_reference", sourceReference);
+  if (verificationNotes) formData.append("verification_notes", verificationNotes);
+  if (createdBy) formData.append("created_by", createdBy);
+  return requestFormData<ModelDetail>(`${modelsPath(projectId, studyId)}/antimony-import`, formData);
+}
+
+export function getModelAntimonySource(
+  projectId: string,
+  studyId: string,
+  modelId: string,
+): Promise<AntimonySourceResponse> {
+  return request<AntimonySourceResponse>(
+    `${modelPath(projectId, studyId, modelId)}/antimony-source`,
+  );
+}
+
+export function getModelImportProvenance(
+  projectId: string,
+  studyId: string,
+  modelId: string,
+): Promise<ModelImportProvenanceItem | null> {
+  return request<ModelImportProvenanceItem | null>(
+    `${modelPath(projectId, studyId, modelId)}/import-provenance`,
+  );
 }
 
 function studyPath(projectId: string, studyId: string): string {
@@ -562,6 +633,131 @@ export function getAliasMappingRevision(
   );
 }
 
+// Initial-Conditions Dataset Import increment. Mirrors the time-series dataset's own
+// preview/save/list/get and alias-mapping routes exactly, one dataset type over. See
+// docs/36_initial_conditions_dataset_import_increment.md.
+
+function initialConditionsDatasetsPath(projectId: string, studyId: string): string {
+  return `/api/v1/projects/${encodeURIComponent(projectId)}/subprojects/${encodeURIComponent(
+    studyId,
+  )}/datasets/initial-conditions`;
+}
+
+export async function downloadInitialConditionsDatasetTemplate(
+  projectId: string,
+  studyId: string,
+): Promise<Blob> {
+  return requestBlob(`${initialConditionsDatasetsPath(projectId, studyId)}/template`);
+}
+
+export function previewInitialConditionsDataset(
+  projectId: string,
+  studyId: string,
+  file: File,
+): Promise<InitialConditionsWorkbookPreview> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return requestFormData<InitialConditionsWorkbookPreview>(
+    `${initialConditionsDatasetsPath(projectId, studyId)}/preview`,
+    formData,
+  );
+}
+
+export function saveInitialConditionsDataset(
+  projectId: string,
+  studyId: string,
+  file: File,
+  savedBy?: string,
+): Promise<InitialConditionsDatasetDetail> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (savedBy) {
+    formData.append("saved_by", savedBy);
+  }
+  return requestFormData<InitialConditionsDatasetDetail>(
+    initialConditionsDatasetsPath(projectId, studyId),
+    formData,
+  );
+}
+
+export function listInitialConditionsDatasets(
+  projectId: string,
+  studyId: string,
+): Promise<InitialConditionsDatasetListItem[]> {
+  return request<InitialConditionsDatasetListItem[]>(
+    initialConditionsDatasetsPath(projectId, studyId),
+  );
+}
+
+export function getInitialConditionsDataset(
+  projectId: string,
+  studyId: string,
+  datasetId: string,
+): Promise<InitialConditionsDatasetDetail> {
+  return request<InitialConditionsDatasetDetail>(
+    `${initialConditionsDatasetsPath(projectId, studyId)}/${encodeURIComponent(datasetId)}`,
+  );
+}
+
+function initialConditionsAliasMappingPath(
+  projectId: string,
+  studyId: string,
+  datasetId: string,
+  modelId: string,
+): string {
+  return `${initialConditionsDatasetsPath(projectId, studyId)}/${encodeURIComponent(
+    datasetId,
+  )}/alias-mapping/${encodeURIComponent(modelId)}`;
+}
+
+export function getCurrentInitialConditionsAliasMapping(
+  projectId: string,
+  studyId: string,
+  datasetId: string,
+  modelId: string,
+): Promise<InitialConditionsAliasMappingDetail> {
+  return request<InitialConditionsAliasMappingDetail>(
+    initialConditionsAliasMappingPath(projectId, studyId, datasetId, modelId),
+  );
+}
+
+export function saveInitialConditionsAliasMapping(
+  projectId: string,
+  studyId: string,
+  datasetId: string,
+  modelId: string,
+  body: SaveInitialConditionsAliasMappingRequest,
+): Promise<InitialConditionsAliasMappingDetail> {
+  return request<InitialConditionsAliasMappingDetail>(
+    initialConditionsAliasMappingPath(projectId, studyId, datasetId, modelId),
+    { method: "POST", body },
+  );
+}
+
+export function listInitialConditionsAliasMappingRevisions(
+  projectId: string,
+  studyId: string,
+  datasetId: string,
+  modelId: string,
+): Promise<InitialConditionsAliasMappingRevisionSummary[]> {
+  return request<InitialConditionsAliasMappingRevisionSummary[]>(
+    `${initialConditionsAliasMappingPath(projectId, studyId, datasetId, modelId)}/revisions`,
+  );
+}
+
+export function getInitialConditionsAliasMappingRevision(
+  projectId: string,
+  studyId: string,
+  datasetId: string,
+  modelId: string,
+  revisionNumber: number,
+): Promise<InitialConditionsAliasMappingDetail> {
+  return request<InitialConditionsAliasMappingDetail>(
+    `${initialConditionsAliasMappingPath(projectId, studyId, datasetId, modelId)}` +
+      `/revisions/${revisionNumber}`,
+  );
+}
+
 // Joint Calibration Workflow, configuration-only increment. Mirrors
 // app/api/v1/routes/calibration.py. See docs/29_joint_calibration_workflow_design.md and
 // docs/30_joint_calibration_configuration_increment.md.
@@ -683,6 +879,34 @@ export function setCalibrationExperimentMapping(
 ): Promise<CalibrationJobDetail> {
   return request<CalibrationJobDetail>(
     `${jobPath(projectId, studyId, jobId)}/experiments/${encodeURIComponent(experimentId)}/mapping`,
+    { method: "PATCH", body },
+  );
+}
+
+export function setCalibrationExperimentInitialConditionsDataset(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  experimentId: string,
+  body: SetExperimentInitialConditionsDatasetRequest,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/experiments/${encodeURIComponent(experimentId)}` +
+      "/initial-conditions-dataset",
+    { method: "PATCH", body },
+  );
+}
+
+export function setCalibrationExperimentInitialConditionsMapping(
+  projectId: string,
+  studyId: string,
+  jobId: string,
+  experimentId: string,
+  body: SetExperimentInitialConditionsMappingRequest,
+): Promise<CalibrationJobDetail> {
+  return request<CalibrationJobDetail>(
+    `${jobPath(projectId, studyId, jobId)}/experiments/${encodeURIComponent(experimentId)}` +
+      "/initial-conditions-mapping",
     { method: "PATCH", body },
   );
 }

@@ -9,7 +9,7 @@ import {
   saveTimeSeriesDataset,
 } from "../api/client";
 import { createStaleGuard } from "../lib/staleGuard";
-import { NOT_CAPTURED } from "../format";
+import { NOT_CAPTURED, formatScientific, fullPrecisionTitle } from "../format";
 import { RouterLink } from "./RouterLink";
 import type {
   ProjectDetail,
@@ -353,13 +353,24 @@ export function TimeSeriesDatasetsListScreen({
               <tbody>
                 {previewState.preview.rows.map((row) => (
                   <tr key={row.row_index}>
-                    <td>{row.time_value ?? row.time_raw ?? NOT_CAPTURED}</td>
+                    <td title={row.time_value !== null ? fullPrecisionTitle(row.time_value) : undefined}>
+                      {row.time_value !== null
+                        ? formatScientific(row.time_value)
+                        : (row.time_raw ?? NOT_CAPTURED)}
+                    </td>
                     {previewState.preview.measurement_columns.map((column) => {
                       const measurement = row.measurements[column.column_name];
                       return (
-                        <td key={column.column_name}>
+                        <td
+                          key={column.column_name}
+                          title={
+                            measurement.status === "MEASURED"
+                              ? fullPrecisionTitle(measurement.value)
+                              : undefined
+                          }
+                        >
                           {measurement.status === "MEASURED"
-                            ? measurement.value
+                            ? formatScientific(measurement.value)
                             : measurement.status}
                         </td>
                       );

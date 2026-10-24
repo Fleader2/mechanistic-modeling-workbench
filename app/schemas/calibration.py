@@ -40,6 +40,9 @@ from app.models.enums import (
 from app.models.model_relationship import ModelRelationship
 from app.persistence.calibration import CalibrationFinding, ExecutionCapability
 from app.persistence.dataset_model_alias_mapping import get_current_mapping_revision
+from app.persistence.initial_conditions_alias_mapping import (
+    get_current_mapping_revision as get_current_ic_mapping_revision,
+)
 
 
 class VariableBindingItem(BaseModel):
@@ -145,6 +148,19 @@ class ExperimentItem(BaseModel):
     #: legal (docs/32).
     outputs_with_measured_uncertainty: list[str]
     output_weightings: list[OutputWeightingItem]
+    #: Initial-Conditions Dataset Import increment (docs/36): this experiment's own optionally-
+    #: pinned initial-conditions dataset -- entirely separate from ``time_series_dataset_id``
+    #: (the calibration *target* data). ``None`` unless a scientist has pinned one.
+    initial_conditions_dataset_id: UUID | None
+    initial_conditions_dataset_name: str | None
+    initial_conditions_alias_mapping_revision_id: UUID | None
+    initial_conditions_alias_mapping_revision_number: int | None
+    #: Mirrors ``mapping_is_stale``, one level down.
+    initial_conditions_mapping_is_stale: bool
+    #: Every measurement column of this experiment's own pinned initial-conditions dataset --
+    #: what a ``value_source=INITIAL_CONDITIONS_DATASET`` binding may legally name
+    #: (``source_column_name``). Empty if no initial-conditions dataset is pinned.
+    available_initial_conditions_columns: list[str]
 
     @classmethod
     def from_model(cls, experiment: CalibrationExperiment, *, session) -> ExperimentItem:
@@ -162,6 +178,24 @@ class ExperimentItem(BaseModel):
         current_revision_number = (
             current_revision.revision_number if current_revision is not None else None
         )
+
+        ic_dataset = experiment.initial_conditions_dataset
+        ic_pinned_revision_number = (
+            experiment.initial_conditions_alias_mapping_revision.revision_number
+            if experiment.initial_conditions_alias_mapping_revision is not None
+            else None
+        )
+        ic_current_revision_number = None
+        if ic_dataset is not None:
+            ic_current_revision = get_current_ic_mapping_revision(
+                session,
+                initial_conditions_dataset_id=experiment.initial_conditions_dataset_id,
+                model_id=experiment.arm.model_id,
+            )
+            ic_current_revision_number = (
+                ic_current_revision.revision_number if ic_current_revision is not None else None
+            )
+
         return cls(
             id=experiment.id,
             time_series_dataset_id=experiment.time_series_dataset_id,
@@ -189,6 +223,25 @@ class ExperimentItem(BaseModel):
                 OutputWeightingItem.from_model(w, dataset=dataset)
                 for w in experiment.output_weightings
             ],
+            initial_conditions_dataset_id=experiment.initial_conditions_dataset_id,
+            initial_conditions_dataset_name=(
+                None
+                if ic_dataset is None
+                else (ic_dataset.dataset_name or ic_dataset.dataset_reference.name)
+            ),
+            initial_conditions_alias_mapping_revision_id=(
+                experiment.initial_conditions_alias_mapping_revision_id
+            ),
+            initial_conditions_alias_mapping_revision_number=ic_pinned_revision_number,
+            initial_conditions_mapping_is_stale=(
+                experiment.initial_conditions_alias_mapping_revision_id is not None
+                and ic_pinned_revision_number != ic_current_revision_number
+            ),
+            available_initial_conditions_columns=(
+                []
+                if ic_dataset is None
+                else [c.column_name for c in ic_dataset.measurement_columns]
+            ),
         )
 
 
@@ -442,6 +495,23 @@ class SetExperimentMappingRequest(BaseModel):
     updated_by: str | None = None
 
 
+class SetExperimentInitialConditionsDatasetRequest(BaseModel):
+    """Initial-Conditions Dataset Import increment (docs/36). ``None`` clears the pin (and,
+    per ``set_experiment_initial_conditions_dataset``, always clears any pinned mapping
+    revision too)."""
+
+    initial_conditions_dataset_id: UUID | None
+    expected_edit_version: int
+    updated_by: str | None = None
+
+
+class SetExperimentInitialConditionsMappingRequest(BaseModel):
+    #: Identified by ``revision_number``, mirroring ``SetExperimentMappingRequest`` exactly.
+    alias_mapping_revision_number: int | None
+    expected_edit_version: int
+    updated_by: str | None = None
+
+
 class SetExperimentRoleRequest(BaseModel):
     role: CalibrationExperimentRole
     expected_edit_version: int
@@ -534,6 +604,8 @@ __all__ = [
     "ModelRelationshipItem",
     "OutputWeightingItem",
     "ParameterRoleItem",
+    "SetExperimentInitialConditionsDatasetRequest",
+    "SetExperimentInitialConditionsMappingRequest",
     "SetExperimentMappingRequest",
     "SetExperimentObjectiveWeightingRequest",
     "SetExperimentOutputWeightingRequest",

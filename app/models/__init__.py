@@ -36,6 +36,16 @@ from app.models.hierarchy_node import HierarchyNode
 from app.models.hierarchy_pending_review_item import HierarchyPendingReviewItem
 from app.models.hierarchy_resume_attempt import HierarchyResumeAttempt
 from app.models.hierarchy_review_decision import HierarchyReviewDecision
+from app.models.initial_conditions_alias_mapping import (
+    InitialConditionsAliasMappingAssignment,
+    InitialConditionsAliasMappingRevision,
+)
+from app.models.initial_conditions_dataset import (
+    InitialConditionsDataset,
+    InitialConditionsDatasetRow,
+    InitialConditionsMeasurementColumn,
+    InitialConditionsMeasurementUncertaintyColumn,
+)
 from app.models.model import Model
 from app.models.model_build_request import (
     ModelBuildRequest,
@@ -48,6 +58,7 @@ from app.models.model_build_request import (
     ModelBuildRequestRegulatoryInteraction,
     ModelBuildRequestSpecies,
 )
+from app.models.model_import_provenance import ModelImportProvenance
 from app.models.model_module import ModelModule
 from app.models.model_parameter_catalog import ModelParameter, ModelParameterCatalog
 from app.models.model_relationship import ModelRelationship
@@ -97,6 +108,12 @@ __all__ = [
     "HierarchyPendingReviewItem",
     "HierarchyResumeAttempt",
     "HierarchyReviewDecision",
+    "InitialConditionsAliasMappingAssignment",
+    "InitialConditionsAliasMappingRevision",
+    "InitialConditionsDataset",
+    "InitialConditionsDatasetRow",
+    "InitialConditionsMeasurementColumn",
+    "InitialConditionsMeasurementUncertaintyColumn",
     "Model",
     "ModelBuildRequest",
     "ModelBuildRequestAssumption",
@@ -108,6 +125,7 @@ __all__ = [
     "ModelBuildRequestRegulatoryInteraction",
     "ModelBuildRequestSpecies",
     "ModelCompartment",
+    "ModelImportProvenance",
     "ModelModule",
     "ModelParameter",
     "ModelParameterCatalog",

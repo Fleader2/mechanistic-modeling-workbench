@@ -151,3 +151,44 @@ const READINESS_FINDING_LABELS: Record<ReadinessFindingCode, string> = {
 export function formatReadinessFindingCode(code: ReadinessFindingCode): string {
   return READINESS_FINDING_LABELS[code];
 }
+
+/** Every continuous/measured value shown on screen (observed/predicted values, parameter
+ * bounds and fixed values, sigma/weight values, dataset sample values, curator-decided initial
+ * values) -- never a count, id, index, or revision number, which stay plain integers. Rounds to
+ * 3 significant figures and renders in scientific notation (e.g. `16.361616600246265` ->
+ * `"1.64e1"`). A non-numeric string (or a null/undefined the caller has not already guarded) is
+ * returned unchanged -- this never corrupts a value it cannot safely parse as a number. */
+export function formatScientific(value: number | string | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return String(value);
+  }
+  if (numeric === 0) {
+    return "0e0";
+  }
+  return numeric.toExponential(2).replace("e+", "e");
+}
+
+/** The exact, unrounded counterpart to `formatScientific` -- the full-precision value that
+ * display rounds away, with no label of its own (for an inspection view, e.g. an SVG `<title>`
+ * tooltip, that already supplies its own context/wording). A numeric-string API field (Decimal
+ * as string) is returned exactly as given, never reformatted through a binary float -- the
+ * identical "preserve original data" discipline `formatScientific` itself follows. Returns
+ * `undefined` (never a rendered "null"/"undefined" string) for a missing value. Display only --
+ * never fed back into a calculation. */
+export function fullPrecisionValue(value: number | string | null | undefined): string | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  return String(value);
+}
+
+/** `fullPrecisionValue`, labeled for direct use as a bare `title={...}` attribute (which
+ * supplies no context of its own) -- e.g. `<td title={fullPrecisionTitle(x)}>`. */
+export function fullPrecisionTitle(value: number | string | null | undefined): string | undefined {
+  const full = fullPrecisionValue(value);
+  return full === undefined ? undefined : `Full precision: ${full}`;
+}

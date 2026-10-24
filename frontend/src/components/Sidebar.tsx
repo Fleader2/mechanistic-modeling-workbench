@@ -59,6 +59,10 @@ export function Sidebar({ route, project, study }: SidebarProps) {
     route.screen === "module-set-version";
   const onTimeSeriesDatasetsSection =
     route.screen === "time-series-datasets" || route.screen === "time-series-dataset-detail";
+  const onInitialConditionsDatasetsSection =
+    route.screen === "initial-conditions-datasets" ||
+    route.screen === "initial-conditions-dataset-detail" ||
+    route.screen === "initial-conditions-alias-mapping";
   const onCalibrationJobsSection =
     route.screen === "calibration-jobs" || route.screen === "calibration-job-detail";
   const studyScoped =
@@ -66,6 +70,7 @@ export function Sidebar({ route, project, study }: SidebarProps) {
     route.screen === "model-detail" ||
     onModuleSetsSection ||
     onTimeSeriesDatasetsSection ||
+    onInitialConditionsDatasetsSection ||
     onCalibrationJobsSection;
   const projectId = studyScoped ? route.projectId : null;
   const studyId = studyScoped ? route.studyId : null;
@@ -148,6 +153,18 @@ export function Sidebar({ route, project, study }: SidebarProps) {
               className="sidebar-nav-item"
             >
               All datasets
+            </RouterLink>
+          )}
+          {onInitialConditionsDatasetsSection ? (
+            <span className="sidebar-nav-item active" aria-current="page">
+              Initial-conditions datasets
+            </span>
+          ) : (
+            <RouterLink
+              to={`/projects/${projectId}/studies/${studyId}/datasets/initial-conditions`}
+              className="sidebar-nav-item"
+            >
+              Initial-conditions datasets
             </RouterLink>
           )}
           {onCalibrationJobsSection ? (

@@ -60,6 +60,9 @@ from app.persistence.dataset_model_alias_mapping import (
     get_current_mapping_revision,
     get_mapping_revision,
 )
+from app.persistence.initial_conditions_alias_mapping import (
+    get_mapping_revision as get_ic_mapping_revision,
+)
 from app.persistence.model_parameter_catalog import get_model_parameter_catalog
 from app.persistence.model_species_catalog import get_model_species_catalog
 from app.units import UnitComparisonStatus, compare_units
@@ -378,6 +381,83 @@ def set_experiment_mapping(
     return experiment
 
 
+def set_experiment_initial_conditions_dataset(
+    session: Session,
+    *,
+    job: CalibrationJob,
+    experiment_id: UUID,
+    initial_conditions_dataset_id: UUID | None,
+    expected_edit_version: int,
+    updated_by: str | None = None,
+) -> CalibrationExperiment:
+    """Pin (or clear, with ``None``) one experiment's own initial-conditions dataset --
+    Initial-Conditions Dataset Import increment (docs/36). Entirely separate from this
+    experiment's own ``time_series_dataset_id`` (the calibration *target* data): this is what
+    gives a ``value_source=INITIAL_CONDITIONS_DATASET`` binding something real to read from,
+    e.g. one cell type's own protein/metabolite abundance profile.
+
+    Clearing or re-pinning to a different dataset always clears this experiment's own
+    ``initial_conditions_alias_mapping_revision_id`` too -- a mapping revision is only ever
+    meaningful for the specific dataset it was validated against (``set_experiment_initial_
+    conditions_mapping`` re-pins a mapping for the dataset pinned here, as its own explicit,
+    separate step, identical "re-pin, never automatic" discipline as ``set_experiment_mapping``).
+    """
+    _check_version(job, expected_edit_version)
+    experiment = _find_experiment(job, experiment_id)
+    experiment.initial_conditions_dataset_id = initial_conditions_dataset_id
+    experiment.initial_conditions_alias_mapping_revision_id = None
+    job.updated_by = updated_by
+    _bump(job)
+    session.flush()
+    session.expire(
+        experiment, ["initial_conditions_dataset", "initial_conditions_alias_mapping_revision"]
+    )
+    return experiment
+
+
+def set_experiment_initial_conditions_mapping(
+    session: Session,
+    *,
+    job: CalibrationJob,
+    experiment_id: UUID,
+    alias_mapping_revision_number: int | None,
+    expected_edit_version: int,
+    updated_by: str | None = None,
+) -> CalibrationExperiment:
+    """Re-pin (or clear, with ``None``) one experiment's own initial-conditions alias-mapping
+    revision -- mirrors ``set_experiment_mapping`` exactly, one level down (docs/36). Raises
+    ``ValueError`` if this experiment has no initial-conditions dataset pinned at all, or if no
+    such revision exists for (that dataset, this experiment's own arm's model)."""
+    _check_version(job, expected_edit_version)
+    experiment = _find_experiment(job, experiment_id)
+    if alias_mapping_revision_number is None:
+        experiment.initial_conditions_alias_mapping_revision_id = None
+    else:
+        if experiment.initial_conditions_dataset_id is None:
+            raise ValueError(
+                f"experiment {experiment_id} has no initial-conditions dataset pinned -- pin "
+                "one before pinning a mapping revision for it"
+            )
+        revision = get_ic_mapping_revision(
+            session,
+            initial_conditions_dataset_id=experiment.initial_conditions_dataset_id,
+            model_id=experiment.arm.model_id,
+            revision_number=alias_mapping_revision_number,
+        )
+        if revision is None:
+            raise ValueError(
+                f"no initial-conditions alias-mapping revision {alias_mapping_revision_number} "
+                f"for (dataset={experiment.initial_conditions_dataset_id}, "
+                f"model={experiment.arm.model_id})"
+            )
+        experiment.initial_conditions_alias_mapping_revision_id = revision.id
+    job.updated_by = updated_by
+    _bump(job)
+    session.flush()
+    session.expire(experiment, ["initial_conditions_alias_mapping_revision"])
+    return experiment
+
+
 def set_experiment_role(
     session: Session,
     *,
@@ -635,6 +715,11 @@ def add_variable_binding(
     ``TimeSeriesIndependentVariableColumn`` of this experiment's own pinned dataset -- the real
     per-row values themselves stay in that dataset's own rows, never copied here (module
     docstring's "preserve original data ... do not silently convert values").
+    ``value_source=INITIAL_CONDITIONS_DATASET`` (Initial-Conditions Dataset Import increment,
+    docs/36) requires this experiment to already have an initial-conditions dataset pinned
+    (``set_experiment_initial_conditions_dataset``), plus ``source_column_name`` naming a real,
+    declared ``InitialConditionsMeasurementColumn`` of that dataset -- the identical "never
+    copy the real data in here" discipline, one dataset type over.
 
     ``intervention_time`` (Whole-Model Experimental-Scenario Evaluation increment, docs/33) is
     **required when ``model_meaning=INTERVENTION``, forbidden otherwise** -- without it,
@@ -642,6 +727,17 @@ def add_variable_binding(
     ``PARAMETER_OVERRIDE`` (both of which always take effect at the trajectory's own start).
     Also enforced by a database ``CHECK`` constraint (defense in depth); this is the first,
     actionable check a caller actually sees.
+
+    Raises ``ValueError`` if this experiment already has an ``INITIAL_VALUE`` or
+    ``PARAMETER_OVERRIDE`` binding for the identical ``target_component_id`` -- at most one of
+    each is ever meaningful for one target, regardless of the two bindings' own
+    ``value_source`` (a curator-typed constant and a dataset-derived value can conflict just as
+    easily as two constants). Previously this was only caught at scenario-evaluation time
+    (``app.persistence.calibration_scenario_evaluation.resolve_scenario``, which still keeps its
+    own identical check as defense in depth against a configuration that was valid when saved
+    but no longer is); it is now rejected at the moment the conflict is actually created, not
+    only once someone tries to run it. ``INTERVENTION`` is exempt -- a real dosing *schedule* is
+    multiple interventions on the identical target at different times, never a conflict.
     """
     _check_version(job, expected_edit_version)
     experiment = _find_experiment(job, experiment_id)
@@ -668,6 +764,25 @@ def add_variable_binding(
                 f"{source_column_name!r} is not a declared independent-variable column of "
                 f"dataset {experiment.time_series_dataset_id}"
             )
+    elif value_source is CalibrationBindingValueSource.INITIAL_CONDITIONS_DATASET:
+        if experiment.initial_conditions_dataset_id is None:
+            raise ValueError(
+                "value_source=INITIAL_CONDITIONS_DATASET requires this experiment to have an "
+                "initial-conditions dataset pinned first (set_experiment_initial_conditions_"
+                "dataset)"
+            )
+        if not source_column_name:
+            raise ValueError(
+                "value_source=INITIAL_CONDITIONS_DATASET requires source_column_name"
+            )
+        known_ic_columns = {
+            c.column_name for c in experiment.initial_conditions_dataset.measurement_columns
+        }
+        if source_column_name not in known_ic_columns:
+            raise ValueError(
+                f"{source_column_name!r} is not a declared measurement column of "
+                f"initial-conditions dataset {experiment.initial_conditions_dataset_id}"
+            )
 
     if model_meaning is CalibrationBindingModelMeaning.INTERVENTION:
         if intervention_time is None:
@@ -677,6 +792,25 @@ def add_variable_binding(
             f"intervention_time is only valid for model_meaning=INTERVENTION, got "
             f"{model_meaning.value!r}"
         )
+
+    if model_meaning in (
+        CalibrationBindingModelMeaning.INITIAL_VALUE,
+        CalibrationBindingModelMeaning.PARAMETER_OVERRIDE,
+    ):
+        conflicting = next(
+            (
+                b
+                for b in experiment.variable_bindings
+                if b.model_meaning is model_meaning and b.target_component_id == target_component_id
+            ),
+            None,
+        )
+        if conflicting is not None:
+            raise ValueError(
+                f"{target_component_id!r} already has a {model_meaning.value} binding for "
+                f"this experiment (value_source={conflicting.value_source.value}) -- never "
+                "more than one; remove the existing binding first to replace its source"
+            )
 
     binding = CalibrationExperimentVariableBinding(
         experiment=experiment,
@@ -1378,6 +1512,16 @@ def _build_snapshot_payload(job: CalibrationJob, findings: list[CalibrationFindi
                             if experiment.alias_mapping_revision is not None
                             else None
                         ),
+                        "initial_conditions_dataset_id": (
+                            str(experiment.initial_conditions_dataset_id)
+                            if experiment.initial_conditions_dataset_id is not None
+                            else None
+                        ),
+                        "initial_conditions_alias_mapping_revision_number": (
+                            experiment.initial_conditions_alias_mapping_revision.revision_number
+                            if experiment.initial_conditions_alias_mapping_revision is not None
+                            else None
+                        ),
                         "variable_bindings": [
                             {
                                 "model_meaning": b.model_meaning.value,
@@ -1556,6 +1700,8 @@ __all__ = [
     "remove_experiment_output_weighting",
     "remove_parameter_role",
     "remove_variable_binding",
+    "set_experiment_initial_conditions_dataset",
+    "set_experiment_initial_conditions_mapping",
     "set_experiment_mapping",
     "set_experiment_objective_weighting",
     "set_experiment_output_weighting",
