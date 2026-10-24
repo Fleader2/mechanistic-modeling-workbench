@@ -2,13 +2,21 @@ import { useEffect, useRef, useState } from "react";
 import {
   ApiRequestError,
   getModel,
+  getModelAntimonySource,
+  getModelImportProvenance,
   getModelLineage,
   getModelingStudy,
   getProject,
 } from "../api/client";
 import { createStaleGuard } from "../lib/staleGuard";
 import { formatModelStatus } from "../format";
-import type { ModelDetail, ModelLineage, ProjectDetail, SubprojectDetail } from "../types";
+import type {
+  ModelDetail,
+  ModelImportProvenanceItem,
+  ModelLineage,
+  ProjectDetail,
+  SubprojectDetail,
+} from "../types";
 import { RouterLink } from "./RouterLink";
 import { ModelTabs, type ModelTab } from "./ModelTabs";
 import { ModelInformationCard } from "./ModelInformationCard";
@@ -36,6 +44,17 @@ type LineageState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "ready"; lineage: ModelLineage };
+
+type AntimonySourceState =
+  | { status: "loading" }
+  | { status: "unavailable" }
+  | { status: "error"; message: string }
+  | { status: "ready"; antimonyText: string };
+
+type ProvenanceState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; provenance: ModelImportProvenanceItem | null };
 
 interface ModelOverviewScreenProps {
   projectId: string;
@@ -81,6 +100,10 @@ export function ModelOverviewScreen({
   const [studyState, setStudyState] = useState<StudyState>({ status: "loading" });
   const [modelState, setModelState] = useState<ModelState>({ status: "loading" });
   const [lineageState, setLineageState] = useState<LineageState>({ status: "loading" });
+  const [antimonySourceState, setAntimonySourceState] = useState<AntimonySourceState>({
+    status: "loading",
+  });
+  const [provenanceState, setProvenanceState] = useState<ProvenanceState>({ status: "loading" });
   const [activeTab, setActiveTab] = useState<ModelTab>("overview");
   const guard = useRef(createStaleGuard<string>()).current;
 
@@ -91,6 +114,8 @@ export function ModelOverviewScreen({
     setStudyState({ status: "loading" });
     setModelState({ status: "loading" });
     setLineageState({ status: "loading" });
+    setAntimonySourceState({ status: "loading" });
+    setProvenanceState({ status: "loading" });
     setActiveTab("overview");
     onProjectChange(null);
     onStudyChange(null);
@@ -111,6 +136,42 @@ export function ModelOverviewScreen({
               .then((model) => {
                 if (!guard.isCurrent(key)) return;
                 setModelState({ status: "ready", model });
+
+                getModelAntimonySource(projectId, studyId, modelId)
+                  .then((source) => {
+                    if (!guard.isCurrent(key)) return;
+                    setAntimonySourceState({ status: "ready", antimonyText: source.antimony_text });
+                  })
+                  .catch((error: unknown) => {
+                    if (!guard.isCurrent(key)) return;
+                    if (error instanceof ApiRequestError && error.status === 404) {
+                      setAntimonySourceState({ status: "unavailable" });
+                    } else {
+                      setAntimonySourceState({
+                        status: "error",
+                        message:
+                          error instanceof ApiRequestError
+                            ? error.message
+                            : "An unexpected error occurred.",
+                      });
+                    }
+                  });
+
+                getModelImportProvenance(projectId, studyId, modelId)
+                  .then((provenance) => {
+                    if (!guard.isCurrent(key)) return;
+                    setProvenanceState({ status: "ready", provenance });
+                  })
+                  .catch((error: unknown) => {
+                    if (!guard.isCurrent(key)) return;
+                    setProvenanceState({
+                      status: "error",
+                      message:
+                        error instanceof ApiRequestError
+                          ? error.message
+                          : "An unexpected error occurred.",
+                    });
+                  });
 
                 return getModelLineage(projectId, studyId, modelId)
                   .then((lineage) => {
@@ -300,9 +361,41 @@ export function ModelOverviewScreen({
         {formatModelStatus(model.status)}
       </p>
 
-      <ModelTabs activeTab={activeTab} onSelectTab={setActiveTab} />
+      <ModelTabs
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        antimonySourceAvailable={antimonySourceState.status === "ready"}
+      />
 
-      {activeTab === "overview" && <ModelInformationCard model={model} />}
+      {activeTab === "overview" && (
+        <ModelInformationCard
+          model={model}
+          provenance={provenanceState.status === "ready" ? provenanceState.provenance : null}
+        />
+      )}
+
+      {activeTab === "antimony" && antimonySourceState.status === "loading" && (
+        <section className="card" aria-label="Antimony source">
+          <p className="status-message">Loading Antimony source…</p>
+        </section>
+      )}
+      {activeTab === "antimony" && antimonySourceState.status === "error" && (
+        <section className="card" aria-label="Antimony source">
+          <p className="status-message error" role="alert">
+            Couldn&apos;t load the Antimony source: {antimonySourceState.message}
+          </p>
+        </section>
+      )}
+      {activeTab === "antimony" && antimonySourceState.status === "ready" && (
+        <section className="card" aria-label="Antimony source">
+          <h2>Antimony source</h2>
+          <p className="status-caveat">
+            Read-only -- exactly the Antimony text this model's own species/parameter catalog
+            was captured from, byte-for-byte, never re-derived.
+          </p>
+          <pre className="time-series-preview">{antimonySourceState.antimonyText}</pre>
+        </section>
+      )}
 
       {activeTab === "history" && lineageState.status === "loading" && (
         <section className="card" aria-label="Version history">

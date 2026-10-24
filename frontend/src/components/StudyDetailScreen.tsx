@@ -244,9 +244,12 @@ export function StudyDetailScreen({
           <ModelsTable projectId={projectId} studyId={studyId} models={modelsState.models} />
         )}
 
-        <button type="button" className="primary-button" disabled title="Not available yet">
-          New Model
-        </button>
+        <RouterLink
+          to={`/projects/${projectId}/studies/${studyId}/upload-antimony`}
+          className="primary-button"
+        >
+          Upload Antimony
+        </RouterLink>
       </section>
     </div>
   );
